@@ -4,7 +4,12 @@ import io
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
-import cv2
+# OpenCV is required for processing; keep import optional so UI can still load
+# and show a friendly error instead of crashing at import-time.
+try:
+    import cv2  # type: ignore
+except Exception:  # pragma: no cover
+    cv2 = None  # type: ignore
 import numpy as np
 from PIL import Image
 
@@ -37,6 +42,7 @@ class ProcessResult:
 
 
 def _pil_to_bgr(pil_img: Image.Image) -> np.ndarray:
+    _require_cv2()
     if pil_img.mode not in ("RGB", "RGBA"):
         pil_img = pil_img.convert("RGB")
     arr = np.array(pil_img)
@@ -49,6 +55,7 @@ def _pil_to_bgr(pil_img: Image.Image) -> np.ndarray:
 
 
 def _bgr_to_pil(bgr: np.ndarray) -> Image.Image:
+    _require_cv2()
     rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
     return Image.fromarray(rgb)
 
@@ -58,6 +65,7 @@ def _clamp(v: float, lo: float, hi: float) -> float:
 
 
 def _compute_brightness_contrast(bgr: np.ndarray) -> Tuple[float, float]:
+    _require_cv2()
     gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
     brightness = float(np.mean(gray))
     contrast = float(np.std(gray))
@@ -90,6 +98,7 @@ def _background_uniformity_check(bgr: np.ndarray, border_pct: float = 0.08) -> T
 
 
 def _equalize_hist_y_channel(bgr: np.ndarray) -> np.ndarray:
+    _require_cv2()
     ycrcb = cv2.cvtColor(bgr, cv2.COLOR_BGR2YCrCb)
     y, cr, cb = cv2.split(ycrcb)
     y_eq = cv2.equalizeHist(y)
@@ -197,6 +206,7 @@ def _safe_crop_with_pad(bgr: np.ndarray, rect: Tuple[int, int, int, int]) -> np.
 
 
 def _resize_to_standard(bgr: np.ndarray, ratio_name: str) -> np.ndarray:
+    _require_cv2()
     if ratio_name == "3x4":
         out_w, out_h = 600, 800
     else:
@@ -268,6 +278,7 @@ class PortraitProcessor:
         self.ratio = ratio
         self.blue_rgb = blue_rgb
         self.min_face_conf = float(min_face_conf)
+        _require_cv2()
         self._fd = _get_mediapipe_face_detector(min_confidence=self.min_face_conf) if mp is not None else None
         self._rembg_session = new_session(rembg_model) if new_session is not None else None
 
@@ -300,6 +311,13 @@ def process_portrait_image(
     errors: List[str] = []
     warnings: List[str] = []
     checks: Dict[str, CheckResult] = {}
+
+    try:
+        _require_cv2()
+    except RuntimeError as e:
+        errors.append(str(e))
+        checks["Thư viện OpenCV"] = CheckResult(False, str(e))
+        return ProcessResult(status="FAILED", errors=errors, warnings=warnings, checks=checks, processed_image=None)
 
     bgr0 = _pil_to_bgr(pil_img)
     h0, w0 = bgr0.shape[:2]
@@ -366,6 +384,12 @@ def pil_to_jpeg_bytes(pil_img: Image.Image, quality: int = 95) -> bytes:
     pil_img.save(buf, format="JPEG", quality=int(_clamp(quality, 60, 100)), optimize=True)
     return buf.getvalue()
 
+def _require_cv2() -> None:
+    if cv2 is None:
+        raise RuntimeError(
+            "Thiếu OpenCV (`cv2`). Hãy cài `opencv-python-headless` rồi chạy lại."
+        )
+
 
 def _detect_faces_with_detector(
     bgr: np.ndarray,
@@ -375,6 +399,7 @@ def _detect_faces_with_detector(
     """
     Nếu có detector (FaceDetection) thì dùng lại; nếu không thì tạo tạm (chậm hơn).
     """
+    _require_cv2()
     h, w = bgr.shape[:2]
     # Preferred: MediaPipe (if available)
     if detector is not None or mp is not None:

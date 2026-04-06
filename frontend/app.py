@@ -151,6 +151,19 @@ def main() -> None:
 
     with st.sidebar:
         st.caption(f"**Build:** `{APP_BUILD}` — UI `frontend/`, xử lý `backend/`")
+        with st.expander("Kiểm tra thư viện", expanded=False):
+            import platform
+
+            st.write(f"**Python:** `{platform.python_version()}`")
+            try:
+                import cv2  # type: ignore
+
+                st.success(f"OpenCV OK (`cv2`): {getattr(cv2, '__version__', 'unknown')}")
+            except Exception as e:
+                st.error("Thiếu OpenCV (`cv2`).")
+                st.code(str(e))
+                st.caption("Gợi ý (Python 3.13): `pip install -r requirements-local-py313.txt` trong venv.")
+
         st.markdown("### Hướng dẫn nhanh")
         st.markdown(
             """
