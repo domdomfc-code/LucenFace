@@ -1174,10 +1174,19 @@ def process_portrait_image(
         )
         return ProcessResult(status="OK", errors=errors, warnings=warnings, checks=checks, processed_image=out_pil)
 
-    if skip_rembg_if_uniform_background and ok_bg_final:
+    # Cả ảnh gốc lẫn khung đầu ra đều một màu → không rembg (kể cả "ép ghép nền"):
+    # rembg trên studio trắng/xanh hay làm viền xanh / rách áo tối.
+    if ok_bg and ok_bg_final:
         checks["Thay nền xanh"] = CheckResult(
             True,
-            "Bỏ qua ghép nền xanh — phông trên khung đầu ra đã đơn sắc (đạt tiêu chuẩn một màu, giữ nguyên nền).",
+            "Bỏ qua ghép nền xanh — nền gốc và khung đầu ra đều đơn sắc (giữ phông, tránh artefact rembg).",
+        )
+        return ProcessResult(status="OK", errors=errors, warnings=warnings, checks=checks, processed_image=out_pil)
+
+    if skip_rembg_if_uniform_background and (ok_bg_final or ok_bg):
+        checks["Thay nền xanh"] = CheckResult(
+            True,
+            "Bỏ qua ghép nền xanh — phông đạt chuẩn một màu (ảnh gốc hoặc khung đầu ra, giữ nguyên nền).",
         )
         return ProcessResult(status="OK", errors=errors, warnings=warnings, checks=checks, processed_image=out_pil)
 
