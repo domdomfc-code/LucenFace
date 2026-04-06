@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import math
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -135,7 +136,7 @@ def _suppress_contained_duplicates(
 
 def _nms_face_boxes(
     faces: List[Tuple[int, int, int, int, float]],
-    iou_threshold: float = 0.38,
+    iou_threshold: float = 0.43,
 ) -> List[Tuple[int, int, int, int, float]]:
     """
     Giữ một bbox cho mỗi khuôn mặt: loại trùng IoU cao (cùng người, nhiều detection).
@@ -151,14 +152,68 @@ def _nms_face_boxes(
     return kept
 
 
+def _filter_spurious_secondary_faces(
+    faces: List[Tuple[int, int, int, int, float]],
+    img_w: int,
+    img_h: int,
+) -> List[Tuple[int, int, int, int, float]]:
+    """
+    Ảnh thẻ 1 người: detector đôi khi trả thêm bbox nhỏ (cà vạt, ve áo, nền) hoặc hai box
+    chồng nhẹ cho cùng một mặt. Giữ bbox chính (điểm + diện tích lớn nhất).
+    Hai người thật: thường hai box tương đương, xa nhau — không lọc.
+    """
+    if len(faces) <= 1:
+        return faces
+    faces = sorted(faces, key=lambda f: (f[4], _box_area_xyxy(f[:4])), reverse=True)
+    primary = faces[0]
+    px1, py1, px2, py2 = primary[:4]
+    pa = _box_area_xyxy(primary[:4])
+    if pa <= 0:
+        return faces
+    diag = max(1.0, math.hypot(float(px2 - px1), float(py2 - py1)))
+    pcx = (px1 + px2) / 2.0
+    pcy = (py1 + py2) / 2.0
+    img_area = float(max(1, img_w * img_h))
+
+    kept: List[Tuple[int, int, int, int, float]] = [primary]
+    for f in faces[1:]:
+        fx1, fy1, fx2, fy2 = f[:4]
+        fa = _box_area_xyxy(f[:4])
+        fcx = (fx1 + fx2) / 2.0
+        fcy = (fy1 + fy2) / 2.0
+        iou = _iou_xyxy(f[:4], primary[:4])
+        dist = math.hypot(fcx - pcx, fcy - pcy)
+
+        # Trùng / gần trùng cùng một mặt
+        if iou >= 0.09:
+            continue
+        # Box phụ rất nhỏ trên ảnh hoặc nhỏ hơn nhiều so với mặt chính, gần tâm mặt
+        if fa < 0.012 * img_area and (fa < 0.48 * pa or iou > 0.035 or dist < 0.52 * diag):
+            continue
+        # Hai box chồng nhẹ: box nhỏ hơn rõ, điểm không hơn mặt chính
+        if fa < 0.44 * pa and dist < 0.65 * diag and f[4] <= primary[4] * 0.96:
+            continue
+        # Nhiễu cực nhỏ so với mặt chính (dù xa tâm một chút)
+        if fa < 0.20 * pa and f[4] < primary[4] * 0.90:
+            continue
+
+        kept.append(f)
+
+    return kept
+
+
 def _dedupe_face_detections(
     faces: List[Tuple[int, int, int, int, float]],
+    img_w: int,
+    img_h: int,
 ) -> List[Tuple[int, int, int, int, float]]:
-    """Chuỗi lọc: box lồng nhau → NMS IoU."""
+    """Chuỗi lọc: box lồng nhau → NMS IoU → bỏ bbox phụ kiểu ảnh thẻ."""
     if len(faces) <= 1:
         return faces
     faces = _suppress_contained_duplicates(faces)
-    return _nms_face_boxes(faces, iou_threshold=0.38)
+    faces = _nms_face_boxes(faces, iou_threshold=0.43)
+    faces = _filter_spurious_secondary_faces(faces, img_w, img_h)
+    return faces
 
 
 def _compute_brightness_contrast(bgr: np.ndarray) -> Tuple[float, float]:
@@ -461,6 +516,57 @@ def _resize_cover_to_standard(bgr: np.ndarray, ratio_name: str) -> np.ndarray:
     return patch.copy()
 
 
+def _merge_rembg_alpha_with_selfie(
+    alpha_u8: np.ndarray,
+    pil_rgb: Image.Image,
+    selfie: Any,
+) -> np.ndarray:
+    """
+    rembg trên ảnh tối hay mất tóc/áo (tương phản nền thấp). Lấy max(alpha_rembg, alpha_selfie)
+    trong vùng chân dung (trên ~82% khung, dải giữa) để giữ silhouette người.
+    """
+    _require_cv2()
+    bgr = _pil_to_bgr(pil_rgb)
+    bgr_in = _boost_bgr_for_segmentation(bgr)
+    rgb = cv2.cvtColor(bgr_in, cv2.COLOR_BGR2RGB)
+    try:
+        res = selfie.process(rgb)
+    except Exception:
+        return alpha_u8
+    if res is None or getattr(res, "segmentation_mask", None) is None:
+        return alpha_u8
+
+    m = np.asarray(res.segmentation_mask, dtype=np.float32)
+    h, w = alpha_u8.shape[:2]
+    if m.shape[0] != h or m.shape[1] != w:
+        m = cv2.resize(m, (w, h), interpolation=cv2.INTER_LINEAR)
+
+    hh, ww = h, w
+    y_lim = min(hh - 1, int(hh * 0.82))
+    xc = ww // 2
+    bw = max(8, int(ww * 0.76))
+    x1 = max(0, xc - bw // 2)
+    x2 = min(ww, xc + bw // 2)
+    spatial = np.zeros((hh, ww), dtype=np.float32)
+    spatial[:y_lim, x1:x2] = 1.0
+    bf = min(int(hh * 0.11), hh - y_lim)
+    for i in range(bf):
+        y = y_lim + i
+        if y >= hh:
+            break
+        wgt = 1.0 - (i + 1) / float(bf + 1)
+        spatial[y, x1:x2] = wgt
+
+    # Làm mềm ngưỡng để không gắn cứng 0.5
+    person = np.clip((m - 0.35) / 0.55, 0.0, 1.0)
+    person = person * spatial
+    boost = (person * 255.0).astype(np.float32)
+    a_out = np.maximum(alpha_u8.astype(np.float32), boost * 0.91)
+    a_out = np.clip(a_out, 0, 255).astype(np.uint8)
+    a_out = cv2.GaussianBlur(a_out, (3, 3), 0)
+    return _refine_alpha_u8(a_out)
+
+
 def _remove_bg_and_compose_blue(
     pil_rgb: Image.Image,
     blue_rgb: Tuple[int, int, int],
@@ -468,6 +574,7 @@ def _remove_bg_and_compose_blue(
     high_key_photo: bool = False,
     low_light: bool = False,
     pil_segmentation: Image.Image | None = None,
+    selfie_for_alpha: Any | None = None,
 ) -> Tuple[Image.Image, bool]:
     """
     rembg → RGBA, ghép lên nền xanh. Luôn dùng màu từ `pil_rgb`; kênh alpha có thể suy từ ảnh boost
@@ -475,6 +582,7 @@ def _remove_bg_and_compose_blue(
 
     Ảnh sáng: tắt matting (tránh tối da). Ảnh tối: tắt matting + boost đầu vào — alpha matting
     dễ làm rách/lỗ mặt nạ khi tương phản thấp.
+    Nếu có `selfie_for_alpha`: kết hợp max alpha với MediaPipe Selfie (giữ tóc/vai khi rembg nuốt chủ thể).
     """
     if remove is None:
         raise RuntimeError("Thiếu thư viện `rembg` trong môi trường hiện tại.")
@@ -507,6 +615,8 @@ def _remove_bg_and_compose_blue(
     _, _, _, a_raw = fg.split()
     a_np = np.array(a_raw)
     a_np = _refine_alpha_u8(a_np)
+    if low_light and selfie_for_alpha is not None:
+        a_np = _merge_rembg_alpha_with_selfie(a_np, pil_rgb, selfie_for_alpha)
     mask_ok, _ = _mask_subject_ok(a_np)
     a = Image.fromarray(a_np, mode="L")
     fg2 = Image.merge("RGBA", (r_src, g_src, b_src, a))
@@ -854,11 +964,17 @@ def process_portrait_image(
             high_key_photo=high_key,
             low_light=low_light,
             pil_segmentation=pil_seg,
+            selfie_for_alpha=_selfie_segmentation if low_light else None,
         )
         if high_key:
             msg_rembg = "Đã thay nền xanh (ảnh sáng: tách nền không matting để giữ màu)."
         elif low_light:
-            msg_rembg = "Đã thay nền xanh (ảnh tối: tách nền với boost + không matting)."
+            if _selfie_segmentation is not None:
+                msg_rembg = (
+                    "Đã thay nền xanh (ảnh tối: rembg + selfie giữ tóc/vai; nên chụp sáng hơn nếu cần)."
+                )
+            else:
+                msg_rembg = "Đã thay nền xanh (ảnh tối: tách nền với boost + không matting)."
         else:
             msg_rembg = "Đã thay nền xanh chuẩn."
         if not mask_ok:
@@ -920,7 +1036,7 @@ def _detect_faces_with_detector(
             faces.append((x1, y1, x2, y2, score))
 
         faces.sort(key=lambda f: f[4], reverse=True)
-        return _dedupe_face_detections(faces)
+        return _dedupe_face_detections(faces, w, h)
 
     # Fallback: OpenCV Haar Cascade (MediaPipe không khởi tạo được hoặc không cài)
     gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
@@ -936,4 +1052,4 @@ def _detect_faces_with_detector(
         y2 = int(_clamp(y + hh, y1 + 1, h))
         faces2.append((x1, y1, x2, y2, 0.50))  # heuristic score
     faces2.sort(key=lambda f: _box_area_xyxy(f[:4]), reverse=True)
-    return _dedupe_face_detections(faces2)
+    return _dedupe_face_detections(faces2, w, h)
