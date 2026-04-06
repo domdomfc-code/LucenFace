@@ -7,7 +7,7 @@ import platform
 import sys
 import zipfile
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import TYPE_CHECKING, Dict, List, Tuple
 
 import streamlit as st
 from PIL import Image
@@ -17,7 +17,28 @@ _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from backend.image_utils import PortraitProcessor, ProcessResult, pil_to_jpeg_bytes
+# Không import `backend.image_utils` lúc load module — tránh crash/OOM/timeout healthz trên Streamlit Cloud
+# (OpenCV + MediaPipe + rembg + ONNX rất nặng). Chỉ tải khi `_ensure_image_backend()` chạy.
+if TYPE_CHECKING:
+    from backend.image_utils import PortraitProcessor, ProcessResult
+
+PortraitProcessor = None  # type: ignore[assignment,misc]
+ProcessResult = None  # type: ignore[assignment,misc]
+pil_to_jpeg_bytes = None  # type: ignore[assignment,misc]
+_image_backend_loaded = False
+
+
+def _ensure_image_backend() -> None:
+    """Lazy-import pipeline ảnh — gọi trước khi dùng PortraitProcessor / pil_to_jpeg_bytes."""
+    global PortraitProcessor, ProcessResult, pil_to_jpeg_bytes, _image_backend_loaded
+    if _image_backend_loaded:
+        return
+    from backend.image_utils import PortraitProcessor as _PC, ProcessResult as _PR, pil_to_jpeg_bytes as _pj
+
+    PortraitProcessor = _PC
+    ProcessResult = _PR
+    pil_to_jpeg_bytes = _pj
+    _image_backend_loaded = True
 
 
 def _read_remove_bg_api_key() -> str | None:
@@ -54,7 +75,7 @@ def _cv2_troubleshoot_markdown() -> str:
 
 APP_TITLE = "Chuẩn hóa ảnh chân dung học sinh"
 # Đổi số khi deploy để kiểm tra Streamlit Cloud đã build bản mới (sidebar hiển thị).
-APP_BUILD = "3.7.1-rembg-alpha-halo-fix"
+APP_BUILD = "3.7.2-lazy-backend-import-healthz"
 BLUE = "#005BC4"
 BG = "#F6F9FF"
 
@@ -338,6 +359,7 @@ def _get_processor(
     `cache_version` đổi khi deploy (APP_BUILD) để tránh giữ PortraitProcessor cũ
     không khớp chữ ký `process(..., replace_background=...)` → TypeError trên Cloud.
     """
+    _ensure_image_backend()
     _ = cache_version  # phân vùng cache theo APP_BUILD
     return PortraitProcessor(
         ratio=ratio,
@@ -639,6 +661,7 @@ def main() -> None:
                     st.info("Không xử lý được do lỗi phát hiện khuôn mặt.")
                 else:
                     st.image(res.processed_image, width="stretch")
+                    _ensure_image_backend()
                     out_bytes = pil_to_jpeg_bytes(res.processed_image, quality=95)
                     base = filename.rsplit(".", 1)[0] if "." in filename else filename
                     zip_name = f"{idx:03d}_{base}_chuanhoa.jpg"
