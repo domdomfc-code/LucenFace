@@ -58,3 +58,8 @@ Thay `<TAI_KHOAN>` và `<TEN_REPO>` bằng đúng của bạn. Nếu dùng SSH, 
 
 Không cần `secrets.toml` trừ khi bạn thêm API key sau này.
 
+### Lỗi `ImportError` khi `import cv2` trên Streamlit Cloud
+Repo đã kèm **`packages.txt`** (apt) để cài thư viện hệ thống cần cho OpenCV trên Linux. Sau khi push, trong **Manage app** chọn **Reboot** để build lại.
+
+Nếu vẫn lỗi: **Settings** → **Python version** thử **3.11** (Advanced settings).
+
