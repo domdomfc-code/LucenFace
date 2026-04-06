@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import platform
 import sys
 import zipfile
 from pathlib import Path
@@ -17,9 +18,29 @@ if str(_ROOT) not in sys.path:
 from backend.image_utils import PortraitProcessor, ProcessResult, pil_to_jpeg_bytes
 
 
+def _cv2_troubleshoot_markdown() -> str:
+    if platform.system() == "Windows":
+        return (
+            "**Windows (máy bạn):**\n\n"
+            "1. PowerShell trong thư mục dự án: `python -m venv .venv`\n"
+            "2. Bật venv: `.\\.venv\\Scripts\\Activate.ps1`  \n"
+            "   (nếu bị chặn: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`)\n"
+            "3. Cài: `pip install -U pip` rồi `pip install -r requirements.txt`\n"
+            "4. Chạy: `streamlit run app.py`\n\n"
+            "Chỉ thiếu OpenCV: `pip install opencv-python-headless` trong venv.\n\n"
+            "Lỗi kiểu `libgthread` / `.so` là của **Linux** (Cloud), không áp dụng Windows — không cần `apt` hay `packages.txt` trên máy bạn."
+        )
+    return (
+        "**macOS / Linux (local):** `python3 -m venv .venv` → `source .venv/bin/activate` "
+        "→ `pip install -r requirements.txt` → `streamlit run app.py`.\n\n"
+        "**Streamlit Cloud (Linux):** thêm `libgl1` và `libglib2.0-0t64` vào `packages.txt` "
+        "nếu thiếu `libGL.so.1` hoặc `libgthread-2.0.so.0`. Không dùng `libglib2.0-0` (tên cũ)."
+    )
+
+
 APP_TITLE = "Chuẩn hóa ảnh chân dung học sinh"
 # Đổi số khi deploy để kiểm tra Streamlit Cloud đã build bản mới (sidebar hiển thị).
-APP_BUILD = "3.3.6-packages-glib-t64"
+APP_BUILD = "3.3.7-win-troubleshoot"
 BLUE = "#005BC4"
 BG = "#F6F9FF"
 
@@ -327,9 +348,7 @@ def main() -> None:
     with st.sidebar:
         st.caption(f"**Build:** `{APP_BUILD}` — UI `frontend/`, xử lý `backend/`")
         with st.expander("Kiểm tra thư viện", expanded=False):
-            import platform
-
-            st.write(f"**Python:** `{platform.python_version()}`")
+            st.write(f"**Python:** `{platform.python_version()}` — **HĐH:** `{platform.system()}`")
             try:
                 import cv2  # type: ignore
 
@@ -337,7 +356,15 @@ def main() -> None:
             except Exception as e:
                 st.error("Thiếu OpenCV (`cv2`).")
                 st.code(str(e))
-                st.caption("Gợi ý (Python 3.13): `pip install -r requirements-local-py313.txt` trong venv.")
+                if platform.system() == "Windows":
+                    st.caption(
+                        "Windows: `python -m venv .venv` → `.\\.venv\\Scripts\\Activate.ps1` "
+                        "→ `pip install -r requirements.txt` hoặc `pip install opencv-python-headless`."
+                    )
+                else:
+                    st.caption(
+                        "Gợi ý (Python 3.13): `pip install -r requirements-local-py313.txt` trong venv."
+                    )
 
         st.markdown("### Hướng dẫn nhanh")
         st.markdown(
@@ -404,12 +431,7 @@ def main() -> None:
     except Exception as e:
         st.error("Thiếu OpenCV (`cv2`) hoặc OpenCV không import được trong môi trường hiện tại.")
         st.code(str(e))
-        st.info(
-            "Windows / macOS (local): `pip install opencv-python-headless` trong venv — không cần gói apt.\n\n"
-            "Streamlit Cloud (Debian mới): thêm `libgl1` và `libglib2.0-0t64` vào `packages.txt` "
-            "nếu thiếu `libGL.so.1` hoặc `libgthread-2.0.so.0`. "
-            "Không dùng `libglib2.0-0` (tên cũ, dễ lỗi apt trên image Trixie)."
-        )
+        st.markdown(_cv2_troubleshoot_markdown())
         st.stop()
 
     # Lazy init processor to avoid UI freeze on first load (mediapipe/rembg can take time).

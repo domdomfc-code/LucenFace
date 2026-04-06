@@ -17,7 +17,11 @@ except ImportError as e:
     import streamlit as st
 
     st.set_page_config(page_title="Lỗi phụ thuộc", layout="centered")
-    st.error("Không tải được thư viện xử lý ảnh (OpenCV, MediaPipe, rembg, …). Kiểm tra `requirements.txt` và logs trên Streamlit Cloud.")
+    st.error(
+        "Không tải được thư viện xử lý ảnh (OpenCV, MediaPipe, rembg, …). "
+        "Trên Windows: bật venv rồi `pip install -r requirements.txt`. "
+        "Trên Streamlit Cloud: xem logs và `requirements.txt`."
+    )
     st.code(str(e))
     st.stop()
 else:
