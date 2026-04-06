@@ -61,5 +61,5 @@ Không cần `secrets.toml` trừ khi bạn thêm API key sau này.
 ### Lỗi `ImportError` khi `import cv2` trên Streamlit Cloud
 Repo đã kèm **`packages.txt`** (apt) tối thiểu cho OpenCV trên Linux. **Không** thêm `libglib2.0-0` — trên image Streamlit Cloud dễ xung đột phiên bản Debian. **Không ghi comment** trong `packages.txt`. Sau khi push: **Manage app** → **Reboot**.
 
-Nếu vẫn lỗi: **Settings** → **Python version** thử **3.11** (Advanced settings). `requirements.txt` đã ghim `protobuf` tương thích MediaPipe.
+Streamlit Cloud có thể dùng **Python 3.14**; `mediapipe==0.10.14` **không còn wheel** — repo dùng **`mediapipe==0.10.33`**. Nếu pip vẫn báo không có wheel: **Settings** → **Python version** chọn **3.11** hoặc **3.12** (Advanced settings).
 

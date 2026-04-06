@@ -1,6 +1,7 @@
 streamlit>=1.32,<2
 opencv-python-headless==4.10.0.84
-mediapipe==0.10.14
+# Bản có wheel cho Python mới (Cloud dùng 3.12–3.14); 0.10.14 không còn phù hợp
+mediapipe==0.10.33
 Pillow>=10,<12
 numpy>=1.26,<2.1
 rembg>=2.0,<3
