@@ -278,6 +278,27 @@ def _compute_brightness_contrast(bgr: np.ndarray) -> Tuple[float, float]:
     return brightness, contrast
 
 
+def _mean_std_rgb(pixels_flat_bgr: np.ndarray) -> float:
+    """Trung bình σ của 3 kênh BGR trên mảng (N, 3)."""
+    if pixels_flat_bgr.size < 9:
+        return 999.0
+    return float(pixels_flat_bgr.astype(np.float32).std(axis=0).mean())
+
+
+def _lab_ab_std_mean(bgr_region: np.ndarray) -> float:
+    """
+    Độ lệch trên kênh a,b (Lab) — ít nhạy với gradient sáng/tối trên nền phẳng một màu
+    so với chỉ dùng RGB trên toàn viền (hay lẫn tóc/vai).
+    """
+    if bgr_region.size < 9:
+        return 999.0
+    _require_cv2()
+    lab = cv2.cvtColor(bgr_region, cv2.COLOR_BGR2LAB)
+    a = lab[..., 1].astype(np.float32).ravel()
+    b_ = lab[..., 2].astype(np.float32).ravel()
+    return float(0.5 * (np.std(a) + np.std(b_)))
+
+
 def _background_uniformity_check(
     bgr: np.ndarray,
     border_pct: float = 0.08,
@@ -285,10 +306,10 @@ def _background_uniformity_check(
     standard_wording: bool = False,
 ) -> Tuple[bool, str]:
     """
-    Heuristic: sample border pixels and check color variance.
-    If standard deviation of RGB channels is small, background is likely solid.
+    Heuristic: phông một màu — không tin viền đủ 4 cạnh (hay lẫn chủ thể: tóc, vai, cổ áo).
 
-    `standard_wording=True`: dùng cho khung đầu ra — gắn với tiêu chuẩn “phông một màu”.
+    Dùng thêm: bốn góc + dải phía trên giữa (thường chỉ nền), và σ a,b trong Lab.
+    Giữ `σ toàn viền` trong thông báo để debug.
     """
     h, w = bgr.shape[:2]
     bw = max(2, int(w * border_pct))
@@ -303,15 +324,52 @@ def _background_uniformity_check(
         [top.reshape(-1, 3), bottom.reshape(-1, 3), left.reshape(-1, 3), right.reshape(-1, 3)],
         axis=0,
     )
-    std = border.astype(np.float32).std(axis=0).mean()
+    std_border_full = _mean_std_rgb(border)
 
-    if std < 18.0:
+    # Góc: vùng nhỏ ít bị người che (ảnh thẻ chân dung)
+    m = min(w, h)
+    cw = max(2, int(m * 0.10))
+    ch = max(2, int(m * 0.10))
+    corner_patches = (
+        bgr[0:ch, 0:cw, :],
+        bgr[0:ch, w - cw : w, :],
+        bgr[h - ch : h, 0:cw, :],
+        bgr[h - ch : h, w - cw : w, :],
+    )
+    corner_flat = np.concatenate([p.reshape(-1, 3) for p in corner_patches], axis=0)
+    std_corner_rgb = _mean_std_rgb(corner_flat)
+    std_corner_ab = _lab_ab_std_mean(np.concatenate([p for p in corner_patches], axis=0))
+
+    # Dải trên giữa (phía trên đầu — thường chỉ phông)
+    tw = max(cw, int(w * 0.42))
+    th = max(2, int(h * 0.06))
+    x0 = max(0, (w - tw) // 2)
+    x1 = min(w, x0 + tw)
+    top_mid = bgr[0:th, x0:x1, :]
+    std_top_rgb = _mean_std_rgb(top_mid.reshape(-1, 3))
+    std_top_ab = _lab_ab_std_mean(top_mid)
+
+    std_rgb_clean = min(std_corner_rgb, std_top_rgb)
+    std_ab_clean = min(std_corner_ab, std_top_ab)
+
+    # Ngưỡng: RGB trên vùng “sạch”; Lab a,b bắt nền một sắc độ khi có gradient sáng
+    rgb_ok = 20.0
+    rgb_soft = 34.0
+    ab_ok = 12.0
+    ok = (std_rgb_clean < rgb_ok) or (std_rgb_clean < rgb_soft and std_ab_clean < ab_ok)
+
+    detail = (
+        f"σ RGB (góc/trên giữa) ~{std_rgb_clean:.1f}, σ Lab(a,b) ~{std_ab_clean:.1f}; "
+        f"viền đủ cạnh ~{std_border_full:.1f}"
+    )
+
+    if ok:
         if standard_wording:
-            return True, f"Đạt tiêu chuẩn — phông gần một màu (σ màu ~{std:.1f})."
-        return True, f"Nền tương đối đơn sắc (độ lệch chuẩn màu ~{std:.1f})."
+            return True, f"Đạt tiêu chuẩn — phông gần một màu ({detail})."
+        return True, f"Nền tương đối đơn sắc ({detail})."
     if standard_wording:
-        return False, f"Chưa đạt — viền không đồng đều một màu (σ ~{std:.1f}), nên ghép nền xanh nếu cần."
-    return False, f"Nền có thể không đơn sắc (độ lệch chuẩn màu ~{std:.1f})."
+        return False, f"Chưa đạt — phông không đồng nhất ({detail}); có thể ghép nền xanh nếu cần."
+    return False, f"Nền có thể không đơn sắc ({detail})."
 
 
 def _boost_bgr_for_face_detection(bgr: np.ndarray) -> np.ndarray:
