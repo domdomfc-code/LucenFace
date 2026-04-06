@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import io
 import math
-from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 # OpenCV is required for processing; keep import optional so UI can still load
@@ -29,19 +28,34 @@ except Exception:  # pragma: no cover
     remove = None  # type: ignore
 
 
-@dataclass
 class CheckResult:
-    ok: bool
-    message: str
+    """Kết quả một mục checklist (không dùng @dataclass — tránh lỗi import trên Python 3.12/Streamlit)."""
+
+    __slots__ = ("ok", "message")
+
+    def __init__(self, ok: bool, message: str) -> None:
+        self.ok = ok
+        self.message = message
 
 
-@dataclass
 class ProcessResult:
-    status: str  # "OK" | "FAILED"
-    errors: List[str]
-    warnings: List[str]
-    checks: Dict[str, CheckResult]
-    processed_image: Optional[Image.Image]
+    """Kết quả pipeline (không dùng @dataclass — tránh lỗi import trên Python 3.12/Streamlit)."""
+
+    __slots__ = ("status", "errors", "warnings", "checks", "processed_image")
+
+    def __init__(
+        self,
+        status: str,
+        errors: List[str],
+        warnings: List[str],
+        checks: Dict[str, CheckResult],
+        processed_image: Optional[Image.Image],
+    ) -> None:
+        self.status = status
+        self.errors = errors
+        self.warnings = warnings
+        self.checks = checks
+        self.processed_image = processed_image
 
 
 def _pil_to_bgr(pil_img: Image.Image) -> np.ndarray:

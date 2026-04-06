@@ -11,9 +11,16 @@ _ROOT = Path(__file__).resolve().parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+# Đăng ký package trước submodule — giảm KeyError ('frontend'/'backend') khi import đồng thời trên Cloud.
+try:
+    import backend  # noqa: F401
+    import frontend  # noqa: F401
+except Exception:  # pragma: no cover
+    pass
+
 try:
     from frontend.app import main
-except ImportError as e:
+except Exception as e:
     import streamlit as st
 
     st.set_page_config(page_title="Lỗi phụ thuộc", layout="centered")
