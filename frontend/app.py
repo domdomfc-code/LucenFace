@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import io
 import platform
 import sys
@@ -40,7 +41,7 @@ def _cv2_troubleshoot_markdown() -> str:
 
 APP_TITLE = "Chuẩn hóa ảnh chân dung học sinh"
 # Đổi số khi deploy để kiểm tra Streamlit Cloud đã build bản mới (sidebar hiển thị).
-APP_BUILD = "3.5.1-processor-cache-bust"
+APP_BUILD = "3.5.2-process-signature-compat"
 BLUE = "#005BC4"
 BG = "#F6F9FF"
 
@@ -291,7 +292,7 @@ def _render_checklist(checks: Dict[str, Dict[str, str]]) -> None:
         }
         for name, payload in checks.items()
     ]
-    st.dataframe(rows, use_container_width=True, hide_index=True)
+    st.dataframe(rows, width="stretch", hide_index=True)
 
 
 def _result_to_checks_dict(res: ProcessResult) -> Dict[str, Dict[str, str]]:
@@ -332,15 +333,18 @@ def _run_processor(
     prefer_face_crop: bool,
     replace_blue_bg: bool,
 ) -> ProcessResult:
-    """Gọi `process`; fallback nếu instance/cache cũ không có tham số `replace_background`."""
-    try:
+    """
+    Gọi `PortraitProcessor.process` — chỉ truyền `replace_background` nếu chữ ký có tham số đó
+    (tránh TypeError khi worker Cloud chạy bản `backend` cũ hơn `frontend`).
+    """
+    params = inspect.signature(processor.process).parameters
+    if "replace_background" in params:
         return processor.process(
             pil,
             prefer_face_crop=prefer_face_crop,
             replace_background=replace_blue_bg,
         )
-    except TypeError:
-        return processor.process(pil, prefer_face_crop=prefer_face_crop)
+    return processor.process(pil, prefer_face_crop=prefer_face_crop)
 
 
 def main() -> None:
@@ -462,7 +466,7 @@ def main() -> None:
         return
 
     st.markdown("### Xử lý hàng loạt")
-    start = st.button("Bắt đầu xử lý", type="primary", use_container_width=False)
+    start = st.button("Bắt đầu xử lý", type="primary", width="content")
     if not start:
         st.caption("Bấm **Bắt đầu xử lý** để chạy pipeline cho toàn bộ ảnh.")
         return
@@ -528,7 +532,7 @@ def main() -> None:
 
             with c1:
                 st.markdown("**Original**")
-                st.image(pil, caption=filename, use_container_width=True)
+                st.image(pil, caption=filename, width="stretch")
 
             with c2:
                 st.markdown("**Trạng thái / Cảnh báo**")
@@ -553,7 +557,7 @@ def main() -> None:
                 if res.processed_image is None:
                     st.info("Không xử lý được do lỗi phát hiện khuôn mặt.")
                 else:
-                    st.image(res.processed_image, use_container_width=True)
+                    st.image(res.processed_image, width="stretch")
                     out_bytes = pil_to_jpeg_bytes(res.processed_image, quality=95)
                     base = filename.rsplit(".", 1)[0] if "." in filename else filename
                     zip_name = f"{idx:03d}_{base}_chuanhoa.jpg"
@@ -564,7 +568,7 @@ def main() -> None:
                         data=out_bytes,
                         file_name=dl_name,
                         mime="image/jpeg",
-                        use_container_width=True,
+                        width="stretch",
                         key=f"dl_single_{idx}",
                     )
 
