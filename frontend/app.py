@@ -20,7 +20,7 @@ from backend.image_utils import PortraitProcessor, ProcessResult, pil_to_jpeg_by
 
 APP_TITLE = "Chuẩn hóa ảnh chân dung học sinh"
 # Đổi số khi deploy để kiểm tra Streamlit Cloud đã build bản mới (sidebar hiển thị).
-APP_BUILD = "3.3.2-windows-hint"
+APP_BUILD = "3.3.3-packages-glib"
 BLUE = "#005BC4"
 BG = "#F6F9FF"
 
@@ -399,9 +399,9 @@ def main() -> None:
         st.error("Thiếu OpenCV (`cv2`) hoặc OpenCV không import được trong môi trường hiện tại.")
         st.code(str(e))
         st.info(
-            "Windows / macOS (chạy local): trong venv dùng `pip install opencv-python-headless` — "
-            "không cần libGL (lỗi đó chỉ gặp trên server Linux).\n\n"
-            "Streamlit Cloud: nếu log báo thiếu libGL.so.1, thêm `libgl1` vào `packages.txt` rồi reboot app."
+            "Windows / macOS (local): `pip install opencv-python-headless` trong venv — không cần gói apt.\n\n"
+            "Streamlit Cloud (Linux): nếu log thiếu `.so` (vd. libGL.so.1, libgthread-2.0.so.0), "
+            "thêm vào `packages.txt` các dòng: `libgl1`, `libglib2.0-0` (và các gói đã có trong repo), rồi reboot app."
         )
         st.stop()
 
