@@ -1,4 +1,5 @@
 streamlit>=1.43,<2
+requests>=2.31,<3
 opencv-python-headless==4.12.0.88
 # Bản có wheel cho Python mới (Cloud dùng 3.12–3.14); 0.10.14 không còn phù hợp
 mediapipe==0.10.33

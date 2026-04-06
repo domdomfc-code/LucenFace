@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 import io
+import os
 import platform
 import sys
 import zipfile
@@ -17,6 +18,18 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from backend.image_utils import PortraitProcessor, ProcessResult, pil_to_jpeg_bytes
+
+
+def _read_remove_bg_api_key() -> str | None:
+    """API key remove.bg: Streamlit Secrets hoặc biến môi trường REMOVEBG_API_KEY."""
+    try:
+        k = st.secrets.get("REMOVEBG_API_KEY")
+        if k is not None and str(k).strip():
+            return str(k).strip()
+    except Exception:
+        pass
+    v = os.environ.get("REMOVEBG_API_KEY", "").strip()
+    return v or None
 
 
 def _cv2_troubleshoot_markdown() -> str:
@@ -41,7 +54,7 @@ def _cv2_troubleshoot_markdown() -> str:
 
 APP_TITLE = "Chuẩn hóa ảnh chân dung học sinh"
 # Đổi số khi deploy để kiểm tra Streamlit Cloud đã build bản mới (sidebar hiển thị).
-APP_BUILD = "3.6.4-force-toggle-respects-uniform-skip"
+APP_BUILD = "3.7.0-remove-bg-api-isnet"
 BLUE = "#005BC4"
 BG = "#F6F9FF"
 
@@ -316,6 +329,9 @@ def _get_processor(
     blue_rgb: Tuple[int, int, int],
     min_face_conf: float,
     *,
+    rembg_engine: str,
+    rembg_model: str,
+    remove_bg_api_key: str | None,
     cache_version: str = APP_BUILD,
 ) -> PortraitProcessor:
     """
@@ -323,7 +339,14 @@ def _get_processor(
     không khớp chữ ký `process(..., replace_background=...)` → TypeError trên Cloud.
     """
     _ = cache_version  # phân vùng cache theo APP_BUILD
-    return PortraitProcessor(ratio=ratio, blue_rgb=blue_rgb, min_face_conf=min_face_conf)
+    return PortraitProcessor(
+        ratio=ratio,
+        blue_rgb=blue_rgb,
+        min_face_conf=min_face_conf,
+        rembg_engine=rembg_engine,
+        rembg_model=rembg_model,
+        remove_bg_api_key=remove_bg_api_key,
+    )
 
 
 def _run_processor(
@@ -419,11 +442,13 @@ def main() -> None:
             help="Tắt: giữ khung gốc, chỉ scale về khung chuẩn — trừ khi nền không đơn sắc (tự cắt theo mặt). Bật: luôn crop theo mặt.",
         )
         replace_blue_bg = st.toggle(
-            "Tự động ghép nền xanh (rembg)",
+            "Tự động ghép nền xanh",
             value=True,
-            help="Bật: cho phép tách nền và ghép màu (nếu ảnh đầu ra chưa có phông một màu). Tắt: chỉ crop/scale, giữ nền gốc.",
+            help="Bật: tách nền (rembg local hoặc remove.bg API) rồi ghép màu. Tắt: chỉ crop/scale, giữ nền gốc.",
         )
         force_blue_despite_uniform = False
+        rembg_engine = "none"
+        rembg_model = "isnet-general-use"
         if replace_blue_bg:
             force_blue_despite_uniform = st.toggle(
                 "Luôn ghép nền xanh (kể cả phông đã một màu)",
@@ -433,6 +458,28 @@ def main() -> None:
                     "Bật: **luôn** ghép màu nền bạn chọn kể cả khi phông đã một màu (đổi màu nền; có thể viền artefact trên áo tối)."
                 ),
             )
+            st.markdown("### Engine tách nền")
+            _eng_pick = st.radio(
+                "Nguồn tách nền",
+                options=["rembg (local, miễn phí)", "remove.bg (API — gần chất lượng web upload)"],
+                index=0,
+                help="remove.bg tương đương trang [remove.bg/upload](https://www.remove.bg/vi/upload) — cần API key.",
+            )
+            if _eng_pick.startswith("remove.bg"):
+                rembg_engine = "remove_bg_api"
+                st.caption("[remove.bg — lấy API key](https://www.remove.bg/api)")
+                if _read_remove_bg_api_key():
+                    st.success("Đã có `REMOVEBG_API_KEY` (Secrets / môi trường).")
+                else:
+                    st.warning("Thêm `REMOVEBG_API_KEY` trong **Streamlit Secrets** hoặc biến môi trường.")
+            else:
+                rembg_engine = "local"
+                rembg_model = st.selectbox(
+                    "Model rembg (ONNX)",
+                    options=["isnet-general-use", "u2net_human_seg", "u2net", "silueta"],
+                    index=0,
+                    help="**isnet-general-use**: thường sắc mép tốt hơn u2net. **u2net_human_seg**: tối ưu người.",
+                )
         max_files = 50
         st.caption(f"Tối đa {max_files} ảnh/lần.")
         st.markdown("---")
@@ -481,6 +528,18 @@ def main() -> None:
         st.caption("Bấm **Bắt đầu xử lý** để chạy pipeline cho toàn bộ ảnh.")
         return
 
+    if replace_blue_bg and rembg_engine == "remove_bg_api" and not _read_remove_bg_api_key():
+        st.error(
+            "Chế độ **remove.bg** cần API key. Trên Streamlit Cloud: **Settings → Secrets** thêm "
+            "`REMOVEBG_API_KEY = \"...\"`. Local: biến môi trường cùng tên. "
+            "[remove.bg API](https://www.remove.bg/api)"
+        )
+        st.stop()
+
+    remove_bg_key_for_processor = (
+        _read_remove_bg_api_key() if (replace_blue_bg and rembg_engine == "remove_bg_api") else None
+    )
+
     # Preflight: ensure OpenCV is importable before creating cached processor.
     # If cv2 is missing, `st.cache_resource` would cache the exception and keep failing.
     try:
@@ -492,13 +551,21 @@ def main() -> None:
         st.stop()
 
     # Lazy init processor to avoid UI freeze on first load (mediapipe/rembg can take time).
-    _spin_engine = "MediaPipe + rembg" if replace_blue_bg else "MediaPipe"
+    if not replace_blue_bg:
+        _spin_engine = "MediaPipe"
+    elif rembg_engine == "remove_bg_api":
+        _spin_engine = "MediaPipe + remove.bg API"
+    else:
+        _spin_engine = f"MediaPipe + rembg ({rembg_model})"
     if lazy_init:
         with st.spinner(f"Đang khởi tạo engine ({_spin_engine})… lần đầu có thể mất 10–60 giây."):
             processor = _get_processor(
                 ratio=ratio,
                 blue_rgb=blue_rgb,
                 min_face_conf=min_face_conf,
+                rembg_engine=rembg_engine,
+                rembg_model=rembg_model,
+                remove_bg_api_key=remove_bg_key_for_processor,
                 cache_version=APP_BUILD,
             )
     else:
@@ -506,6 +573,9 @@ def main() -> None:
             ratio=ratio,
             blue_rgb=blue_rgb,
             min_face_conf=min_face_conf,
+            rembg_engine=rembg_engine,
+            rembg_model=rembg_model,
+            remove_bg_api_key=remove_bg_key_for_processor,
             cache_version=APP_BUILD,
         )
 

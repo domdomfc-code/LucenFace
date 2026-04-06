@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import math
+import os
 from typing import Any, Dict, List, Optional, Tuple
 
 # OpenCV is required for processing; keep import optional so UI can still load
@@ -735,6 +736,31 @@ def _merge_rembg_alpha_with_selfie(
     return _refine_alpha_u8(a_out, strong=True)
 
 
+def _remove_bg_via_remove_bg_api(pil_rgb: Image.Image, api_key: str) -> Image.Image:
+    """
+    Dịch vụ remove.bg (https://www.remove.bg/api) — chất lượng tách nền gần trang upload,
+    cần API key (Streamlit Secrets / biến môi trường REMOVEBG_API_KEY).
+    """
+    try:
+        import requests
+    except ImportError as e:  # pragma: no cover
+        raise RuntimeError("Thiếu gói `requests` — thêm vào requirements.txt để dùng remove.bg API.") from e
+    buf = io.BytesIO()
+    pil_rgb.convert("RGB").save(buf, format="PNG")
+    png_bytes = buf.getvalue()
+    resp = requests.post(
+        "https://api.remove.bg/v1.0/removeBg",
+        files={"image_file": ("portrait.png", png_bytes, "image/png")},
+        data={"size": "auto", "type": "person"},
+        headers={"X-Api-Key": api_key.strip()},
+        timeout=120,
+    )
+    if resp.status_code != 200:
+        hint = resp.text[:300] if resp.text else ""
+        raise RuntimeError(f"remove.bg API trả lỗi HTTP {resp.status_code}. {hint}".strip())
+    return Image.open(io.BytesIO(resp.content)).convert("RGBA")
+
+
 def _remove_bg_and_compose_blue(
     pil_rgb: Image.Image,
     blue_rgb: Tuple[int, int, int],
@@ -743,38 +769,44 @@ def _remove_bg_and_compose_blue(
     low_light: bool = False,
     pil_segmentation: Image.Image | None = None,
     selfie_for_alpha: Any | None = None,
+    remove_bg_api_key: str | None = None,
 ) -> Tuple[Image.Image, bool]:
     """
-    rembg → RGBA, ghép lên nền xanh. Luôn dùng màu từ `pil_rgb`; kênh alpha có thể suy từ ảnh boost
-    (`pil_segmentation`) khi ảnh tối.
+    rembg hoặc remove.bg API → RGBA, ghép lên nền xanh. Luôn dùng màu từ `pil_rgb`; kênh alpha có thể
+    suy từ ảnh boost (`pil_segmentation`) khi ảnh tối (chỉ bản local rembg).
 
     Ảnh sáng: tắt matting (tránh tối da). Ảnh tối: tắt matting + boost đầu vào — alpha matting
     dễ làm rách/lỗ mặt nạ khi tương phản thấp.
-    Nếu có `selfie_for_alpha`: kết hợp max alpha với MediaPipe Selfie (giữ tóc/vai khi rembg nuốt chủ thể).
+    Nếu có `selfie_for_alpha`: kết hợp max alpha với MediaPipe Selfie (chỉ rembg local).
     """
-    if remove is None:
-        raise RuntimeError("Thiếu thư viện `rembg` trong môi trường hiện tại.")
     inp_pil = pil_segmentation if pil_segmentation is not None else pil_rgb
-    buf = io.BytesIO()
-    inp_pil.save(buf, format="PNG")
-    inp = buf.getvalue()
+    api_mode = bool(remove_bg_api_key and str(remove_bg_api_key).strip())
 
-    if high_key_photo:
-        # Alpha matting mạnh dễ làm tối vùng da/tóc trên ảnh studio sáng
-        out = remove(inp, session=session, alpha_matting=False)
-    elif low_light:
-        # Ảnh tối: chỉ dùng mask u2net; matting thường phá hỏng mép
-        out = remove(inp, session=session, alpha_matting=False)
+    if api_mode:
+        fg = _remove_bg_via_remove_bg_api(inp_pil, str(remove_bg_api_key).strip())
     else:
-        out = remove(
-            inp,
-            session=session,
-            alpha_matting=True,
-            alpha_matting_foreground_threshold=235,
-            alpha_matting_background_threshold=10,
-            alpha_matting_erode_size=4,
-        )
-    fg = Image.open(io.BytesIO(out)).convert("RGBA")
+        if remove is None:
+            raise RuntimeError("Thiếu thư viện `rembg` trong môi trường hiện tại.")
+        buf = io.BytesIO()
+        inp_pil.save(buf, format="PNG")
+        inp = buf.getvalue()
+
+        if high_key_photo:
+            # Alpha matting mạnh dễ làm tối vùng da/tóc trên ảnh studio sáng
+            out = remove(inp, session=session, alpha_matting=False)
+        elif low_light:
+            # Ảnh tối: chỉ dùng mask u2net; matting thường phá hỏng mép
+            out = remove(inp, session=session, alpha_matting=False)
+        else:
+            out = remove(
+                inp,
+                session=session,
+                alpha_matting=True,
+                alpha_matting_foreground_threshold=235,
+                alpha_matting_background_threshold=10,
+                alpha_matting_erode_size=4,
+            )
+        fg = Image.open(io.BytesIO(out)).convert("RGBA")
     if fg.size != pil_rgb.size:
         _resample = getattr(getattr(Image, "Resampling", Image), "LANCZOS", Image.LANCZOS)
         fg = fg.resize(pil_rgb.size, _resample)
@@ -782,8 +814,9 @@ def _remove_bg_and_compose_blue(
     r_src, g_src, b_src = pil_rgb.convert("RGB").split()
     _, _, _, a_raw = fg.split()
     a_np = np.array(a_raw)
-    a_np = _refine_alpha_u8(a_np, strong=low_light)
-    if low_light and selfie_for_alpha is not None:
+    # remove.bg đã mịn mép — không refine mạnh để giữ chi tiết tóc/viền
+    a_np = _refine_alpha_u8(a_np, strong=low_light and not api_mode)
+    if low_light and selfie_for_alpha is not None and not api_mode:
         a_np = _merge_rembg_alpha_with_selfie(a_np, pil_rgb, selfie_for_alpha)
     mask_ok, _ = _mask_subject_ok(a_np)
     r_arr = np.array(r_src)
@@ -970,20 +1003,32 @@ class PortraitProcessor:
         ratio: str = "3x4",
         blue_rgb: Tuple[int, int, int] = (0, 91, 196),
         min_face_conf: float = 0.6,
-        rembg_model: str = "u2net",
+        rembg_engine: str = "local",
+        rembg_model: str = "isnet-general-use",
+        remove_bg_api_key: str | None = None,
     ) -> None:
         self.ratio = ratio
         self.blue_rgb = blue_rgb
         self.min_face_conf = float(min_face_conf)
+        self._rembg_engine = rembg_engine
+        self._rembg_model = rembg_model
+        if rembg_engine == "remove_bg_api":
+            k = (remove_bg_api_key or os.environ.get("REMOVEBG_API_KEY") or "").strip()
+            self._remove_bg_api_key = k or None
+        else:
+            self._remove_bg_api_key = None
         _require_cv2()
         self._fd = _try_get_mediapipe_face_detector(min_confidence=self.min_face_conf)
         self._selfie = _try_get_selfie_segmentation()
         self._rembg_session = None
-        if new_session is not None:
-            try:
-                self._rembg_session = new_session(rembg_model)
-            except Exception:
-                self._rembg_session = None
+        if rembg_engine == "local" and new_session is not None:
+            for m in (rembg_model, "u2net"):
+                try:
+                    self._rembg_session = new_session(m)
+                    self._rembg_model = m
+                    break
+                except Exception:
+                    continue
 
     def process(
         self,
@@ -1004,6 +1049,9 @@ class PortraitProcessor:
             _mp_face_detector=self._fd,
             _rembg_session=self._rembg_session,
             _selfie_segmentation=self._selfie,
+            _rembg_engine=self._rembg_engine,
+            _rembg_model=self._rembg_model,
+            _remove_bg_api_key=self._remove_bg_api_key,
         )
 
 
@@ -1018,6 +1066,9 @@ def process_portrait_image(
     _mp_face_detector: Any | None = None,
     _rembg_session: Any | None = None,
     _selfie_segmentation: Any | None = None,
+    _rembg_engine: str = "local",
+    _rembg_model: str = "isnet-general-use",
+    _remove_bg_api_key: str | None = None,
 ) -> ProcessResult:
     """
     Pipeline backend:
@@ -1029,6 +1080,7 @@ def process_portrait_image(
     - `replace_background`: True → rembg + nền xanh; False → chỉ crop/scale theo tỷ lệ, giữ nền gốc.
     - Khi `replace_background` và `skip_rembg_if_uniform_background`: nếu viền khung đầu ra gần một màu
       (tiêu chuẩn phông), bỏ qua rembg và giữ nền gốc.
+    - `_rembg_engine`: `"local"` (rembg + ONNX), `"remove_bg_api"` (API remove.bg), `"none"` (không tải model).
     """
     errors: List[str] = []
     warnings: List[str] = []
@@ -1196,10 +1248,29 @@ def process_portrait_image(
     low_light = (not high_key) and (brightness < 108 or br_crop < 88 or not ok_bc)
     pil_seg = _bgr_to_pil(_boost_bgr_for_segmentation(out_bgr)) if low_light else None
 
+    use_api = _rembg_engine == "remove_bg_api"
+    api_key_stripped = (_remove_bg_api_key or "").strip()
+
     try:
-        if new_session is None or remove is None:
-            raise RuntimeError("Thiếu rembg")
-        session = _rembg_session if _rembg_session is not None else new_session("u2net")
+        if use_api and not api_key_stripped:
+            raise RuntimeError(
+                "Chế độ remove.bg: chưa có API key. Đặt REMOVEBG_API_KEY trong Streamlit Secrets "
+                "hoặc biến môi trường — xem https://www.remove.bg/api"
+            )
+
+        session: Any = None
+        if not use_api:
+            if new_session is None or remove is None:
+                raise RuntimeError("Thiếu rembg")
+            session = _rembg_session if _rembg_session is not None else new_session(_rembg_model)
+            if session is None:
+                try:
+                    session = new_session("u2net")
+                except Exception as e:
+                    raise RuntimeError(
+                        "Không tải được model rembg (isnet-general-use / u2net). Kiểm tra mạng hoặc onnxruntime."
+                    ) from e
+
         out_pil, mask_ok = _remove_bg_and_compose_blue(
             out_pil,
             blue_rgb=blue_rgb,
@@ -1208,8 +1279,11 @@ def process_portrait_image(
             low_light=low_light,
             pil_segmentation=pil_seg,
             selfie_for_alpha=_selfie_segmentation if low_light else None,
+            remove_bg_api_key=api_key_stripped if use_api else None,
         )
-        if high_key:
+        if use_api:
+            msg_rembg = "Đã thay nền xanh (remove.bg API — gần chất lượng trang upload)."
+        elif high_key:
             msg_rembg = "Đã thay nền xanh (ảnh sáng: tách nền không matting để giữ màu)."
         elif low_light:
             if _selfie_segmentation is not None:
