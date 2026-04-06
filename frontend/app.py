@@ -18,6 +18,8 @@ from backend.image_utils import PortraitProcessor, ProcessResult, pil_to_jpeg_by
 
 
 APP_TITLE = "Chuẩn hóa ảnh chân dung học sinh"
+# Đổi số khi deploy để kiểm tra Streamlit Cloud đã build bản mới (sidebar hiển thị).
+APP_BUILD = "2.1-backend-frontend"
 BLUE = "#005BC4"
 BG = "#F6F9FF"
 
@@ -148,6 +150,7 @@ def main() -> None:
     )
 
     with st.sidebar:
+        st.caption(f"**Build:** `{APP_BUILD}` — UI `frontend/`, xử lý `backend/`")
         st.markdown("### Hướng dẫn nhanh")
         st.markdown(
             """
