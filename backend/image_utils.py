@@ -261,6 +261,28 @@ def _resize_to_standard(bgr: np.ndarray, ratio_name: str) -> np.ndarray:
     return cv2.resize(bgr, (out_w, out_h), interpolation=cv2.INTER_CUBIC)
 
 
+def _resize_cover_to_standard(bgr: np.ndarray, ratio_name: str) -> np.ndarray:
+    """Scale toàn ảnh để phủ khung 3:4 hoặc 2:3, cắt giữa — không crop theo mặt."""
+    _require_cv2()
+    if ratio_name == "3x4":
+        out_w, out_h = 600, 800
+    else:
+        out_w, out_h = 600, 900
+    h, w = bgr.shape[:2]
+    if w < 1 or h < 1:
+        return _resize_to_standard(bgr, ratio_name)
+    scale = max(out_w / float(w), out_h / float(h))
+    nw = max(1, int(round(w * scale)))
+    nh = max(1, int(round(h * scale)))
+    resized = cv2.resize(bgr, (nw, nh), interpolation=cv2.INTER_CUBIC)
+    x0 = max(0, (nw - out_w) // 2)
+    y0 = max(0, (nh - out_h) // 2)
+    patch = resized[y0 : y0 + out_h, x0 : x0 + out_w]
+    if patch.shape[0] != out_h or patch.shape[1] != out_w:
+        return cv2.resize(bgr, (out_w, out_h), interpolation=cv2.INTER_CUBIC)
+    return patch.copy()
+
+
 def _remove_bg_and_compose_blue(
     pil_rgb: Image.Image,
     blue_rgb: Tuple[int, int, int],
@@ -353,12 +375,13 @@ class PortraitProcessor:
             except Exception:
                 self._rembg_session = None
 
-    def process(self, pil_img: Image.Image) -> ProcessResult:
+    def process(self, pil_img: Image.Image, *, prefer_face_crop: bool = False) -> ProcessResult:
         return process_portrait_image(
             pil_img,
             ratio=self.ratio,
             blue_rgb=self.blue_rgb,
             min_face_conf=self.min_face_conf,
+            prefer_face_crop=prefer_face_crop,
             _mp_face_detector=self._fd,
             _rembg_session=self._rembg_session,
         )
@@ -369,6 +392,7 @@ def process_portrait_image(
     ratio: str = "3x4",
     blue_rgb: Tuple[int, int, int] = (0, 91, 196),
     min_face_conf: float = 0.6,
+    prefer_face_crop: bool = False,
     _mp_face_detector: Any | None = None,
     _rembg_session: Any | None = None,
 ) -> ProcessResult:
@@ -376,7 +400,8 @@ def process_portrait_image(
     Pipeline backend:
     - Phát hiện khuôn mặt (đúng 1 mặt)
     - Validation: vị trí, tỷ lệ, sáng/tương phản, nền
-    - Auto-fix: crop tỷ lệ, chỉnh sáng nhẹ (CLAHE + trộn Y, không equalize toàn cục)
+    - Crop theo mặt chỉ khi: prefer_face_crop hoặc nền không đơn sắc; không thì scale toàn ảnh (cover).
+    - Chỉnh sáng nhẹ (CLAHE + trộn Y) khi cần
     - Thay nền: rembg + nền xanh
     """
     errors: List[str] = []
@@ -428,17 +453,32 @@ def process_portrait_image(
     if not ok_bg:
         warnings.append(msg_bg)
 
-    aspect = 3 / 4 if ratio == "3x4" else 2 / 3
-    crop_face = _expand_face_bbox_for_portrait((fx1, fy1, fx2, fy2), w0, h0)
-    crop_rect = _compute_crop_rect(w0, h0, crop_face, aspect=aspect)
-    cropped = _safe_crop_with_pad(bgr0, crop_rect)
+    should_face_crop = bool(prefer_face_crop) or (not ok_bg)
+    if should_face_crop:
+        checks["Khung ảnh"] = CheckResult(
+            True,
+            "Cắt theo khuôn mặt (bạn bật hoặc nền không đơn sắc).",
+        )
+        aspect = 3 / 4 if ratio == "3x4" else 2 / 3
+        crop_face = _expand_face_bbox_for_portrait((fx1, fy1, fx2, fy2), w0, h0)
+        crop_rect = _compute_crop_rect(w0, h0, crop_face, aspect=aspect)
+        cropped = _safe_crop_with_pad(bgr0, crop_rect)
+    else:
+        checks["Khung ảnh"] = CheckResult(
+            True,
+            "Giữ khung gốc — chỉ scale về khung chuẩn (nền đơn sắc, không bật cắt mặt).",
+        )
+        cropped = bgr0.copy()
 
     br_crop, _ = _compute_brightness_contrast(cropped)
     # Ảnh gốc hoặc crop đã sáng → không CLAHE (tránh lệch tông trước rembg)
     skip_luma = brightness >= 118 or br_crop >= 102
     cropped_eq = _enhance_luminance_y_channel(cropped, force_skip=skip_luma)
 
-    out_bgr = _resize_to_standard(cropped_eq, ratio_name=ratio)
+    if should_face_crop:
+        out_bgr = _resize_to_standard(cropped_eq, ratio_name=ratio)
+    else:
+        out_bgr = _resize_cover_to_standard(cropped_eq, ratio_name=ratio)
     out_pil = _bgr_to_pil(out_bgr).convert("RGB")
 
     # Studio / nền trắng: rembg matting dễ tối màu → tắt matting, giữ màu gần gốc hơn
@@ -461,7 +501,7 @@ def process_portrait_image(
         )
         checks["Thay nền xanh"] = CheckResult(True, msg_rembg)
     except Exception:
-        warnings.append("Không thể xóa nền tự động (rembg). Ảnh vẫn được crop/cân bằng sáng.")
+        warnings.append("Không thể xóa nền tự động (rembg). Ảnh vẫn được scale/cân bằng sáng.")
         checks["Thay nền xanh"] = CheckResult(False, "Thiếu/lỗi rembg, bỏ qua thay nền.")
 
     return ProcessResult(status="OK", errors=errors, warnings=warnings, checks=checks, processed_image=out_pil)

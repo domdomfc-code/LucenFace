@@ -20,7 +20,7 @@ from backend.image_utils import PortraitProcessor, ProcessResult, pil_to_jpeg_by
 
 APP_TITLE = "Chuẩn hóa ảnh chân dung học sinh"
 # Đổi số khi deploy để kiểm tra Streamlit Cloud đã build bản mới (sidebar hiển thị).
-APP_BUILD = "3.2-studio-highkey"
+APP_BUILD = "3.3-crop-optional"
 BLUE = "#005BC4"
 BG = "#F6F9FF"
 
@@ -314,7 +314,7 @@ def main() -> None:
 
     st.markdown(f'<div class="app-title">{APP_TITLE}</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="app-subtitle">Kéo & thả ảnh vào vùng bên dưới để tự động chuẩn hóa (crop, cân bằng sáng, thay nền xanh, tải ZIP).</div>',
+        '<div class="app-subtitle">Kéo & thả ảnh để chuẩn hóa (khung tùy chọn, cân bằng sáng, thay nền xanh, tải ZIP).</div>',
         unsafe_allow_html=True,
     )
 
@@ -342,11 +342,17 @@ def main() -> None:
               - Tỷ lệ khuôn mặt hợp lý
               - Độ sáng & tương phản đủ
               - Nền tương đối đơn sắc
-            - **Tự động xử lý**: crop theo chuẩn 3x4/4x6, cân bằng sáng, thay nền xanh.
+            - **Khung**: mặc định giữ ảnh gốc (scale); cắt theo mặt nếu bạn bật hoặc nền không đơn sắc.
+            - **Tự động**: cân bằng sáng (khi cần), thay nền xanh.
             """
         )
         st.markdown("---")
         ratio = st.selectbox("Tỷ lệ ảnh đầu ra", ["3x4", "4x6"], index=0)
+        prefer_face_crop = st.toggle(
+            "Cắt theo khuôn mặt (chuẩn chân dung)",
+            value=False,
+            help="Tắt: giữ khung gốc, chỉ scale về khung chuẩn — trừ khi nền không đơn sắc (tự cắt theo mặt). Bật: luôn crop theo mặt.",
+        )
         max_files = 50
         st.caption(f"Tối đa {max_files} ảnh/lần.")
         st.markdown("---")
@@ -362,7 +368,7 @@ def main() -> None:
 
     st.markdown("### Kéo & thả ảnh")
     st.markdown(
-        '<div class="card-soft muted">Mẹo: ảnh rõ mặt, thẳng góc; hệ thống sẽ tự phát hiện 1 khuôn mặt để crop đúng chuẩn.</div>',
+        '<div class="card-soft muted">Mẹo: ảnh rõ mặt, thẳng góc. Cắt theo mặt chỉ khi bạn bật trong sidebar hoặc nền không đơn sắc.</div>',
         unsafe_allow_html=True,
     )
     uploads = st.file_uploader(
@@ -419,7 +425,7 @@ def main() -> None:
 
         with st.spinner(f"Đang xử lý: {filename}"):
             try:
-                res = processor.process(pil)
+                res = processor.process(pil, prefer_face_crop=prefer_face_crop)
             except RuntimeError as e:
                 st.error(str(e))
                 continue
