@@ -41,7 +41,7 @@ def _cv2_troubleshoot_markdown() -> str:
 
 APP_TITLE = "Chuẩn hóa ảnh chân dung học sinh"
 # Đổi số khi deploy để kiểm tra Streamlit Cloud đã build bản mới (sidebar hiển thị).
-APP_BUILD = "3.6.3-skip-rembg-when-both-uniform"
+APP_BUILD = "3.6.4-force-toggle-respects-uniform-skip"
 BLUE = "#005BC4"
 BG = "#F6F9FF"
 
@@ -429,9 +429,8 @@ def main() -> None:
                 "Luôn ghép nền xanh (kể cả phông đã một màu)",
                 value=False,
                 help=(
-                    "Chỉ áp dụng khi **một trong hai** (nền gốc hoặc khung đầu ra) chưa đạt đơn sắc. "
-                    "Nếu **cả hai** đều đạt — luôn bỏ qua rembg (tránh viền xanh trên áo tối, nền studio trắng). "
-                    "Bật: ép ghép khi chỉ một phía đạt hoặc cả hai chưa đạt."
+                    "Tắt (mặc định): nền đơn sắc thì **không** rembg (an toàn với studio trắng/xanh). "
+                    "Bật: **luôn** ghép màu nền bạn chọn kể cả khi phông đã một màu (đổi màu nền; có thể viền artefact trên áo tối)."
                 ),
             )
         max_files = 50
