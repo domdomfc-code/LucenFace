@@ -20,7 +20,7 @@ from backend.image_utils import PortraitProcessor, ProcessResult, pil_to_jpeg_by
 
 APP_TITLE = "Chuẩn hóa ảnh chân dung học sinh"
 # Đổi số khi deploy để kiểm tra Streamlit Cloud đã build bản mới (sidebar hiển thị).
-APP_BUILD = "3.3-crop-optional"
+APP_BUILD = "3.3.1-packages-libgl"
 BLUE = "#005BC4"
 BG = "#F6F9FF"
 
@@ -398,7 +398,10 @@ def main() -> None:
     except Exception as e:
         st.error("Thiếu OpenCV (`cv2`) hoặc OpenCV không import được trong môi trường hiện tại.")
         st.code(str(e))
-        st.info("Hãy cài `opencv-python-headless` (local: dùng venv) rồi chạy lại.")
+        st.info(
+            "Local: `pip install opencv-python-headless`. "
+            "Streamlit Cloud: cần `libGL` — thêm `libgl1` vào `packages.txt` trong repo rồi reboot app."
+        )
         st.stop()
 
     # Lazy init processor to avoid UI freeze on first load (mediapipe/rembg can take time).
