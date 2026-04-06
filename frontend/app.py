@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 import streamlit as st
-import streamlit.components.v1 as components
 from PIL import Image
 
 # Đảm bảo import được package `backend` khi chạy: streamlit run frontend/app.py
@@ -20,7 +19,7 @@ from backend.image_utils import PortraitProcessor, ProcessResult, pil_to_jpeg_by
 
 APP_TITLE = "Chuẩn hóa ảnh chân dung học sinh"
 # Đổi số khi deploy để kiểm tra Streamlit Cloud đã build bản mới (sidebar hiển thị).
-APP_BUILD = "3.3.4-packages-no-glib-pin"
+APP_BUILD = "3.3.5-st-iframe-sidebar"
 BLUE = "#005BC4"
 BG = "#F6F9FF"
 
@@ -227,29 +226,36 @@ def _inject_css() -> None:
 
 def _sidebar_reopen_button() -> None:
     """Nút cố định góc trái: mở lại sidebar khi đã thu nhỏ (backup nếu khó tìm nút mặc định)."""
-    components.html(
-        """
-        <div style="position:fixed;top:52px;left:8px;z-index:999999;">
-        <button type="button" title="Mở cài đặt (sidebar)"
-          onclick="(() => {
-            try {
-              const d = window.parent.document;
-              const q = (s) => d.querySelector(s);
-              (q('[data-testid="collapsedControl"]')
-                || q('[data-testid="stSidebarCollapsedControl"]')
-                || q('button[data-testid="baseButton-header"]')
-                || q('header button[kind="header"]'))?.click();
-            } catch (e) {}
-          })()"
-          style="font-size:1.05rem;line-height:1;padding:0.45rem 0.55rem;border-radius:10px;
-                 border:1px solid rgba(15,23,42,0.12);background:rgba(255,255,255,0.96);
-                 cursor:pointer;box-shadow:0 4px 14px rgba(15,23,42,0.12);color:#0f172a;">
-          ☰
-        </button>
-        </div>
-        """,
-        height=52,
-    )
+    html = """
+<!DOCTYPE html><html><head><meta charset="utf-8"></head>
+<body style="margin:0;padding:0;background:transparent;">
+<div style="position:fixed;top:52px;left:8px;z-index:999999;">
+<button type="button" title="Mở cài đặt (sidebar)"
+  onclick="(() => {
+    try {
+      const d = window.parent.document;
+      const q = (s) => d.querySelector(s);
+      (q('[data-testid="collapsedControl"]')
+        || q('[data-testid="stSidebarCollapsedControl"]')
+        || q('button[data-testid="baseButton-header"]')
+        || q('header button[kind="header"]'))?.click();
+    } catch (e) {}
+  })()"
+  style="font-size:1.05rem;line-height:1;padding:0.45rem 0.55rem;border-radius:10px;
+         border:1px solid rgba(15,23,42,0.12);background:rgba(255,255,255,0.96);
+         cursor:pointer;box-shadow:0 4px 14px rgba(15,23,42,0.12);color:#0f172a;">
+  ☰
+</button>
+</div>
+</body></html>
+"""
+    iframe = getattr(st, "iframe", None)
+    if iframe is not None:
+        iframe(html, height=52)
+    else:
+        import streamlit.components.v1 as components
+
+        components.html(html, height=52)
 
 
 def _render_checklist(checks: Dict[str, Dict[str, str]]) -> None:
