@@ -19,7 +19,7 @@ from backend.image_utils import PortraitProcessor, ProcessResult, pil_to_jpeg_by
 
 APP_TITLE = "Chuẩn hóa ảnh chân dung học sinh"
 # Đổi số khi deploy để kiểm tra Streamlit Cloud đã build bản mới (sidebar hiển thị).
-APP_BUILD = "2.1-backend-frontend"
+APP_BUILD = "2.2-stable"
 BLUE = "#005BC4"
 BG = "#F6F9FF"
 
@@ -203,7 +203,7 @@ def main() -> None:
     processed_zip_items: List[Tuple[str, bytes]] = []
 
     for idx, up in enumerate(uploads, start=1):
-        progress.progress(int((idx - 1) / len(uploads) * 100))
+        progress.progress(min(100, int((idx - 1) / max(len(uploads), 1) * 100)))
 
         raw = up.read()
         filename = up.name
@@ -253,14 +253,17 @@ def main() -> None:
                 else:
                     st.image(res.processed_image, use_container_width=True)
                     out_bytes = pil_to_jpeg_bytes(res.processed_image, quality=95)
-                    out_name = f"{filename.rsplit('.', 1)[0]}_chuanhoa.jpg"
-                    processed_zip_items.append((out_name, out_bytes))
+                    base = filename.rsplit(".", 1)[0] if "." in filename else filename
+                    zip_name = f"{idx:03d}_{base}_chuanhoa.jpg"
+                    dl_name = f"{base}_chuanhoa.jpg"
+                    processed_zip_items.append((zip_name, out_bytes))
                     st.download_button(
                         label="Download ảnh này (JPG)",
                         data=out_bytes,
-                        file_name=out_name,
+                        file_name=dl_name,
                         mime="image/jpeg",
                         use_container_width=True,
+                        key=f"dl_single_{idx}",
                     )
 
             st.markdown("</div>", unsafe_allow_html=True)
@@ -276,6 +279,7 @@ def main() -> None:
             file_name="anh_chan_dung_chuan_hoa.zip",
             mime="application/zip",
             type="primary",
+            key="dl_zip_all",
         )
     else:
         st.warning("Không có ảnh nào được xử lý thành công để đóng gói ZIP.")

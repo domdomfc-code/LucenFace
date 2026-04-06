@@ -215,36 +215,8 @@ def _remove_bg_and_compose_blue(pil_rgb: Image.Image, blue_rgb: Tuple[int, int, 
 
 
 def detect_faces_mediapipe(bgr: np.ndarray, min_confidence: float = 0.6) -> List[Tuple[int, int, int, int, float]]:
-    """
-    Trả về danh sách khuôn mặt (x1,y1,x2,y2,score) theo pixel.
-    """
-    h, w = bgr.shape[:2]
-    rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-
-    fd = _get_mediapipe_face_detector(min_confidence=min_confidence)
-    res = fd.process(rgb)
-
-    faces: List[Tuple[int, int, int, int, float]] = []
-    if not res.detections:
-        return faces
-
-    for det in res.detections:
-        score = float(det.score[0]) if det.score else 0.0
-        box = det.location_data.relative_bounding_box
-        x1 = int(box.xmin * w)
-        y1 = int(box.ymin * h)
-        bw = int(box.width * w)
-        bh = int(box.height * h)
-        x2 = x1 + bw
-        y2 = y1 + bh
-        x1 = int(_clamp(x1, 0, w - 1))
-        y1 = int(_clamp(y1, 0, h - 1))
-        x2 = int(_clamp(x2, x1 + 1, w))
-        y2 = int(_clamp(y2, y1 + 1, h))
-        faces.append((x1, y1, x2, y2, score))
-
-    faces.sort(key=lambda f: f[4], reverse=True)
-    return faces
+    """Trả về danh sách khuôn mặt (x1,y1,x2,y2,score) theo pixel (không tái sử dụng detector — dùng PortraitProcessor khi batch)."""
+    return _detect_faces_with_detector(bgr, min_confidence=min_confidence, detector=None)
 
 
 def _get_mediapipe_face_detector(min_confidence: float = 0.6) -> Any:

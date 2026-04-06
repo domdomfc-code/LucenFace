@@ -11,6 +11,14 @@ _ROOT = Path(__file__).resolve().parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from frontend.app import main
+try:
+    from frontend.app import main
+except ImportError as e:
+    import streamlit as st
 
-main()
+    st.set_page_config(page_title="Lỗi phụ thuộc", layout="centered")
+    st.error("Không tải được thư viện xử lý ảnh (OpenCV, MediaPipe, rembg, …). Kiểm tra `requirements.txt` và logs trên Streamlit Cloud.")
+    st.code(str(e))
+    st.stop()
+else:
+    main()
