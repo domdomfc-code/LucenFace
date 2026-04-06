@@ -197,23 +197,12 @@ def _inject_css() -> None:
     )
 
 
-def _checklist_html(checks: Dict[str, Dict[str, str]]) -> str:
-    parts = ['<div class="checklist">']
+def _render_checklist(checks: Dict[str, Dict[str, str]]) -> None:
     for name, payload in checks.items():
         ok = payload["ok"]
-        msg = payload["message"]
+        msg = str(payload["message"]).replace("\n", " ")
         icon = "✅" if ok else "❌"
-        parts.append(
-            f"""
-            <div class="check-item">
-              <div>{icon}</div>
-              <div class="check-name">{name}</div>
-              <div class="check-msg">{msg}</div>
-            </div>
-            """
-        )
-    parts.append("</div>")
-    return "\n".join(parts)
+        st.markdown(f"{icon} **{name}** — {msg}")
 
 
 def _fake_processed_preview(pil: Image.Image, blue_hex: str) -> Image.Image:
@@ -316,7 +305,7 @@ def main() -> None:
                 st.markdown("**Trạng thái / Checklist (demo)**")
                 st.markdown('<span class="badge-ok">PREVIEW</span>', unsafe_allow_html=True)
                 st.markdown("**Checklist**")
-                st.markdown(_checklist_html(fake_checks), unsafe_allow_html=True)
+                _render_checklist(fake_checks)
             with c3:
                 st.markdown("**Processed (demo)**")
                 st.image(out, use_container_width=True)

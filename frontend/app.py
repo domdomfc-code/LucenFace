@@ -20,7 +20,7 @@ from backend.image_utils import PortraitProcessor, ProcessResult, pil_to_jpeg_by
 
 APP_TITLE = "Chuẩn hóa ảnh chân dung học sinh"
 # Đổi số khi deploy để kiểm tra Streamlit Cloud đã build bản mới (sidebar hiển thị).
-APP_BUILD = "2.9-gentle-luma"
+APP_BUILD = "3.0-checklist-markdown-luma"
 BLUE = "#005BC4"
 BG = "#F6F9FF"
 
@@ -252,23 +252,13 @@ def _sidebar_reopen_button() -> None:
     )
 
 
-def _checklist_html(checks: Dict[str, Dict[str, str]]) -> str:
-    parts = ['<div class="checklist">']
+def _render_checklist(checks: Dict[str, Dict[str, str]]) -> None:
+    """Streamlit Cloud có thể không render HTML phức tạp trong markdown — dùng Markdown thuần."""
     for name, payload in checks.items():
         ok = payload["ok"]
-        msg = payload["message"]
+        msg = str(payload["message"]).replace("\n", " ")
         icon = "✅" if ok else "❌"
-        parts.append(
-            f"""
-            <div class="check-item">
-              <div>{icon}</div>
-              <div class="check-name">{name}</div>
-              <div class="check-msg">{msg}</div>
-            </div>
-            """
-        )
-    parts.append("</div>")
-    return "\n".join(parts)
+        st.markdown(f"{icon} **{name}** — {msg}")
 
 
 def _result_to_checks_dict(res: ProcessResult) -> Dict[str, Dict[str, str]]:
@@ -452,7 +442,7 @@ def main() -> None:
 
                 checks_dict = _result_to_checks_dict(res)
                 st.markdown("**Checklist**")
-                st.markdown(_checklist_html(checks_dict), unsafe_allow_html=True)
+                _render_checklist(checks_dict)
 
             with c3:
                 st.markdown("**Processed**")
