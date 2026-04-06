@@ -20,7 +20,7 @@ from backend.image_utils import PortraitProcessor, ProcessResult, pil_to_jpeg_by
 
 APP_TITLE = "Chuẩn hóa ảnh chân dung học sinh"
 # Đổi số khi deploy để kiểm tra Streamlit Cloud đã build bản mới (sidebar hiển thị).
-APP_BUILD = "3.3.3-packages-glib"
+APP_BUILD = "3.3.4-packages-no-glib-pin"
 BLUE = "#005BC4"
 BG = "#F6F9FF"
 
@@ -400,8 +400,8 @@ def main() -> None:
         st.code(str(e))
         st.info(
             "Windows / macOS (local): `pip install opencv-python-headless` trong venv — không cần gói apt.\n\n"
-            "Streamlit Cloud (Linux): nếu log thiếu `.so` (vd. libGL.so.1, libgthread-2.0.so.0), "
-            "thêm vào `packages.txt` các dòng: `libgl1`, `libglib2.0-0` (và các gói đã có trong repo), rồi reboot app."
+            "Streamlit Cloud: nếu thiếu libGL.so.1, thêm `libgl1` vào `packages.txt`. "
+            "Không thêm `libglib2.0-0` (dễ lỗi apt trên Debian mới của Cloud)."
         )
         st.stop()
 
