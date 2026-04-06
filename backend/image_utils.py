@@ -1,0 +1,415 @@
+from __future__ import annotations
+
+import io
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
+
+import cv2
+import mediapipe as mp
+import numpy as np
+from PIL import Image
+from rembg import new_session, remove
+
+
+@dataclass
+class CheckResult:
+    ok: bool
+    message: str
+
+
+@dataclass
+class ProcessResult:
+    status: str  # "OK" | "FAILED"
+    errors: List[str]
+    warnings: List[str]
+    checks: Dict[str, CheckResult]
+    processed_image: Optional[Image.Image]
+
+
+def _pil_to_bgr(pil_img: Image.Image) -> np.ndarray:
+    if pil_img.mode not in ("RGB", "RGBA"):
+        pil_img = pil_img.convert("RGB")
+    arr = np.array(pil_img)
+    if arr.ndim == 2:
+        return cv2.cvtColor(arr, cv2.COLOR_GRAY2BGR)
+    if arr.shape[2] == 4:
+        arr = cv2.cvtColor(arr, cv2.COLOR_RGBA2BGR)
+        return arr
+    return cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
+
+
+def _bgr_to_pil(bgr: np.ndarray) -> Image.Image:
+    rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+    return Image.fromarray(rgb)
+
+
+def _clamp(v: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, v))
+
+
+def _compute_brightness_contrast(bgr: np.ndarray) -> Tuple[float, float]:
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    brightness = float(np.mean(gray))
+    contrast = float(np.std(gray))
+    return brightness, contrast
+
+
+def _background_uniformity_check(bgr: np.ndarray, border_pct: float = 0.08) -> Tuple[bool, str]:
+    """
+    Heuristic: sample border pixels and check color variance.
+    If standard deviation of RGB channels is small, background is likely solid.
+    """
+    h, w = bgr.shape[:2]
+    bw = max(2, int(w * border_pct))
+    bh = max(2, int(h * border_pct))
+
+    top = bgr[0:bh, :, :]
+    bottom = bgr[h - bh : h, :, :]
+    left = bgr[:, 0:bw, :]
+    right = bgr[:, w - bw : w, :]
+
+    border = np.concatenate(
+        [top.reshape(-1, 3), bottom.reshape(-1, 3), left.reshape(-1, 3), right.reshape(-1, 3)],
+        axis=0,
+    )
+    std = border.astype(np.float32).std(axis=0).mean()
+
+    if std < 18.0:
+        return True, f"Nền tương đối đơn sắc (độ lệch chuẩn màu ~{std:.1f})."
+    return False, f"Nền có thể không đơn sắc (độ lệch chuẩn màu ~{std:.1f})."
+
+
+def _equalize_hist_y_channel(bgr: np.ndarray) -> np.ndarray:
+    ycrcb = cv2.cvtColor(bgr, cv2.COLOR_BGR2YCrCb)
+    y, cr, cb = cv2.split(ycrcb)
+    y_eq = cv2.equalizeHist(y)
+    ycrcb_eq = cv2.merge([y_eq, cr, cb])
+    return cv2.cvtColor(ycrcb_eq, cv2.COLOR_YCrCb2BGR)
+
+
+def _face_center_h_check(face_xyxy: Tuple[int, int, int, int], img_w: int, tolerance: float = 0.12) -> Tuple[bool, str]:
+    x1, y1, x2, y2 = face_xyxy
+    face_cx = (x1 + x2) / 2.0
+    img_cx = img_w / 2.0
+    delta = abs(face_cx - img_cx) / img_w
+    if delta <= tolerance:
+        return True, "Khuôn mặt nằm gần trung tâm theo chiều ngang."
+    return False, "Khuôn mặt lệch khỏi trung tâm theo chiều ngang."
+
+
+def _face_area_ratio_check(face_xyxy: Tuple[int, int, int, int], img_w: int, img_h: int) -> Tuple[bool, str, float]:
+    """
+    Theo tiêu chuẩn ảnh thẻ thường gặp, có thể kiểm tra theo *chiều cao khuôn mặt* so với chiều cao ảnh.
+    Yêu cầu bài toán: khuôn mặt chiếm khoảng 50–70% khung hình (diễn giải theo chiều cao).
+    """
+    x1, y1, x2, y2 = face_xyxy
+    face_h = max(1, (y2 - y1))
+    ratio = float(face_h / max(1, img_h))
+    if 0.50 <= ratio <= 0.70:
+        return True, f"Khuôn mặt chiếm ≈{ratio*100:.1f}% chiều cao ảnh (đạt).", ratio
+    return False, f"Khuôn mặt chiếm ≈{ratio*100:.1f}% chiều cao ảnh (chưa đạt).", ratio
+
+
+def _brightness_contrast_check(brightness: float, contrast: float) -> Tuple[bool, List[str]]:
+    warnings: List[str] = []
+    ok = True
+    if brightness < 80:
+        ok = False
+        warnings.append("Ảnh quá tối (độ sáng thấp).")
+    elif brightness > 190:
+        ok = False
+        warnings.append("Ảnh quá sáng / bị cháy (độ sáng cao).")
+
+    if contrast < 25:
+        ok = False
+        warnings.append("Ảnh bị mờ / tương phản thấp.")
+    return ok, warnings
+
+
+def _compute_crop_rect(
+    img_w: int,
+    img_h: int,
+    face_xyxy: Tuple[int, int, int, int],
+    aspect: float,
+    target_face_height_frac: float = 0.58,
+    headroom_frac: float = 0.18,
+) -> Tuple[int, int, int, int]:
+    """
+    Compute crop rectangle (x1,y1,x2,y2) with desired aspect ratio,
+    trying to keep the face centered and occupying target fraction of crop height.
+    """
+    fx1, fy1, fx2, fy2 = face_xyxy
+    face_h = max(1, fy2 - fy1)
+    face_cx = (fx1 + fx2) / 2.0
+    face_cy = (fy1 + fy2) / 2.0
+
+    crop_h = int(face_h / _clamp(target_face_height_frac, 0.45, 0.75))
+    crop_w = int(crop_h * aspect)
+
+    desired_top = int(face_cy - (0.5 - headroom_frac) * crop_h)
+    desired_left = int(face_cx - crop_w / 2)
+
+    x1 = desired_left
+    y1 = desired_top
+    x2 = x1 + crop_w
+    y2 = y1 + crop_h
+
+    if x1 < 0:
+        x2 -= x1
+        x1 = 0
+    if y1 < 0:
+        y2 -= y1
+        y1 = 0
+    if x2 > img_w:
+        dx = x2 - img_w
+        x1 -= dx
+        x2 = img_w
+    if y2 > img_h:
+        dy = y2 - img_h
+        y1 -= dy
+        y2 = img_h
+
+    x1 = int(_clamp(x1, 0, img_w - 1))
+    y1 = int(_clamp(y1, 0, img_h - 1))
+    x2 = int(_clamp(x2, x1 + 1, img_w))
+    y2 = int(_clamp(y2, y1 + 1, img_h))
+    return x1, y1, x2, y2
+
+
+def _safe_crop_with_pad(bgr: np.ndarray, rect: Tuple[int, int, int, int]) -> np.ndarray:
+    x1, y1, x2, y2 = rect
+    h, w = bgr.shape[:2]
+    x1c, y1c, x2c, y2c = int(_clamp(x1, 0, w)), int(_clamp(y1, 0, h)), int(_clamp(x2, 0, w)), int(_clamp(y2, 0, h))
+    crop = bgr[y1c:y2c, x1c:x2c].copy()
+    if crop.size == 0:
+        return bgr.copy()
+    return crop
+
+
+def _resize_to_standard(bgr: np.ndarray, ratio_name: str) -> np.ndarray:
+    if ratio_name == "3x4":
+        out_w, out_h = 600, 800
+    else:
+        out_w, out_h = 600, 900
+    return cv2.resize(bgr, (out_w, out_h), interpolation=cv2.INTER_CUBIC)
+
+
+def _remove_bg_and_compose_blue(pil_rgb: Image.Image, blue_rgb: Tuple[int, int, int], session: Any) -> Image.Image:
+    """rembg → RGBA, ghép lên nền xanh cố định."""
+    buf = io.BytesIO()
+    pil_rgb.save(buf, format="PNG")
+    inp = buf.getvalue()
+
+    out = remove(
+        inp,
+        session=session,
+        alpha_matting=True,
+        alpha_matting_foreground_threshold=240,
+        alpha_matting_background_threshold=10,
+        alpha_matting_erode_size=12,
+    )
+    fg = Image.open(io.BytesIO(out)).convert("RGBA")
+    bg = Image.new("RGBA", fg.size, blue_rgb + (255,))
+    comp = Image.alpha_composite(bg, fg).convert("RGB")
+    return comp
+
+
+def detect_faces_mediapipe(bgr: np.ndarray, min_confidence: float = 0.6) -> List[Tuple[int, int, int, int, float]]:
+    """
+    Trả về danh sách khuôn mặt (x1,y1,x2,y2,score) theo pixel.
+    """
+    h, w = bgr.shape[:2]
+    rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+
+    fd = _get_mediapipe_face_detector(min_confidence=min_confidence)
+    res = fd.process(rgb)
+
+    faces: List[Tuple[int, int, int, int, float]] = []
+    if not res.detections:
+        return faces
+
+    for det in res.detections:
+        score = float(det.score[0]) if det.score else 0.0
+        box = det.location_data.relative_bounding_box
+        x1 = int(box.xmin * w)
+        y1 = int(box.ymin * h)
+        bw = int(box.width * w)
+        bh = int(box.height * h)
+        x2 = x1 + bw
+        y2 = y1 + bh
+        x1 = int(_clamp(x1, 0, w - 1))
+        y1 = int(_clamp(y1, 0, h - 1))
+        x2 = int(_clamp(x2, x1 + 1, w))
+        y2 = int(_clamp(y2, y1 + 1, h))
+        faces.append((x1, y1, x2, y2, score))
+
+    faces.sort(key=lambda f: f[4], reverse=True)
+    return faces
+
+
+def _get_mediapipe_face_detector(min_confidence: float = 0.6) -> Any:
+    """
+    Trả về instance FaceDetection của MediaPipe (có thể tái sử dụng).
+    Có fallback import path cho một số môi trường deploy.
+    """
+    try:
+        mp_fd = mp.solutions.face_detection  # type: ignore[attr-defined]
+    except Exception:
+        try:
+            from mediapipe.python.solutions import face_detection as mp_fd  # type: ignore
+        except Exception as e:  # pragma: no cover
+            raise RuntimeError(
+                "Không thể khởi tạo MediaPipe Face Detection. "
+                "Vui lòng kiểm tra cài đặt thư viện `mediapipe` trong môi trường chạy."
+            ) from e
+    return mp_fd.FaceDetection(model_selection=1, min_detection_confidence=float(min_confidence))
+
+
+class PortraitProcessor:
+    """
+    Bộ xử lý ảnh chân dung có cache tài nguyên nặng (MediaPipe detector, rembg session).
+
+    Dùng class này cho batch processing để nhanh hơn nhiều so với tạo mới cho mỗi ảnh.
+    """
+
+    def __init__(
+        self,
+        ratio: str = "3x4",
+        blue_rgb: Tuple[int, int, int] = (0, 91, 196),
+        min_face_conf: float = 0.6,
+        rembg_model: str = "u2net",
+    ) -> None:
+        self.ratio = ratio
+        self.blue_rgb = blue_rgb
+        self.min_face_conf = float(min_face_conf)
+        self._fd = _get_mediapipe_face_detector(min_confidence=self.min_face_conf)
+        self._rembg_session = new_session(rembg_model)
+
+    def process(self, pil_img: Image.Image) -> ProcessResult:
+        return process_portrait_image(
+            pil_img,
+            ratio=self.ratio,
+            blue_rgb=self.blue_rgb,
+            min_face_conf=self.min_face_conf,
+            _mp_face_detector=self._fd,
+            _rembg_session=self._rembg_session,
+        )
+
+
+def process_portrait_image(
+    pil_img: Image.Image,
+    ratio: str = "3x4",
+    blue_rgb: Tuple[int, int, int] = (0, 91, 196),
+    min_face_conf: float = 0.6,
+    _mp_face_detector: Any | None = None,
+    _rembg_session: Any | None = None,
+) -> ProcessResult:
+    """
+    Pipeline backend:
+    - Phát hiện khuôn mặt (đúng 1 mặt)
+    - Validation: vị trí, tỷ lệ, sáng/tương phản, nền
+    - Auto-fix: crop tỷ lệ, histogram equalization
+    - Thay nền: rembg + nền xanh
+    """
+    errors: List[str] = []
+    warnings: List[str] = []
+    checks: Dict[str, CheckResult] = {}
+
+    bgr0 = _pil_to_bgr(pil_img)
+    h0, w0 = bgr0.shape[:2]
+
+    faces = _detect_faces_with_detector(bgr0, min_confidence=min_face_conf, detector=_mp_face_detector)
+    if len(faces) == 0:
+        errors.append("Không tìm thấy khuôn mặt.")
+        checks["Khuôn mặt"] = CheckResult(False, "Không phát hiện được khuôn mặt.")
+        return ProcessResult(status="FAILED", errors=errors, warnings=warnings, checks=checks, processed_image=None)
+    if len(faces) > 1:
+        errors.append("Có nhiều hơn 1 khuôn mặt trong ảnh.")
+        checks["Khuôn mặt"] = CheckResult(False, f"Phát hiện {len(faces)} khuôn mặt.")
+        return ProcessResult(status="FAILED", errors=errors, warnings=warnings, checks=checks, processed_image=None)
+
+    fx1, fy1, fx2, fy2, _score = faces[0]
+    checks["Khuôn mặt"] = CheckResult(True, "Phát hiện đúng 1 khuôn mặt.")
+
+    ok_center, msg_center = _face_center_h_check((fx1, fy1, fx2, fy2), w0)
+    checks["Vị trí (giữa khung)"] = CheckResult(ok_center, msg_center)
+    if not ok_center:
+        warnings.append(msg_center)
+
+    ok_ratio, msg_ratio, _ = _face_area_ratio_check((fx1, fy1, fx2, fy2), w0, h0)
+    checks["Tỷ lệ khuôn mặt"] = CheckResult(ok_ratio, msg_ratio)
+    if not ok_ratio:
+        warnings.append(msg_ratio)
+
+    brightness, contrast = _compute_brightness_contrast(bgr0)
+    ok_bc, bc_warns = _brightness_contrast_check(brightness, contrast)
+    checks["Ánh sáng & Tương phản"] = CheckResult(
+        ok_bc, f"Độ sáng ~{brightness:.0f}, tương phản ~{contrast:.0f}."
+    )
+    warnings.extend(bc_warns)
+
+    ok_bg, msg_bg = _background_uniformity_check(bgr0)
+    checks["Nền đơn sắc"] = CheckResult(ok_bg, msg_bg)
+    if not ok_bg:
+        warnings.append(msg_bg)
+
+    aspect = 3 / 4 if ratio == "3x4" else 2 / 3
+    crop_rect = _compute_crop_rect(w0, h0, (fx1, fy1, fx2, fy2), aspect=aspect)
+    cropped = _safe_crop_with_pad(bgr0, crop_rect)
+
+    cropped_eq = _equalize_hist_y_channel(cropped)
+
+    out_bgr = _resize_to_standard(cropped_eq, ratio_name=ratio)
+    out_pil = _bgr_to_pil(out_bgr).convert("RGB")
+
+    try:
+        session = _rembg_session if _rembg_session is not None else new_session("u2net")
+        out_pil = _remove_bg_and_compose_blue(out_pil, blue_rgb=blue_rgb, session=session)
+        checks["Thay nền xanh"] = CheckResult(True, "Đã thay nền xanh chuẩn.")
+    except Exception:
+        warnings.append("Không thể xóa nền tự động (rembg). Ảnh vẫn được crop/cân bằng sáng.")
+        checks["Thay nền xanh"] = CheckResult(False, "Lỗi rembg, bỏ qua thay nền.")
+
+    return ProcessResult(status="OK", errors=errors, warnings=warnings, checks=checks, processed_image=out_pil)
+
+
+def pil_to_jpeg_bytes(pil_img: Image.Image, quality: int = 95) -> bytes:
+    buf = io.BytesIO()
+    pil_img.save(buf, format="JPEG", quality=int(_clamp(quality, 60, 100)), optimize=True)
+    return buf.getvalue()
+
+
+def _detect_faces_with_detector(
+    bgr: np.ndarray,
+    min_confidence: float,
+    detector: Any | None,
+) -> List[Tuple[int, int, int, int, float]]:
+    """
+    Nếu có detector (FaceDetection) thì dùng lại; nếu không thì tạo tạm (chậm hơn).
+    """
+    h, w = bgr.shape[:2]
+    rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+    fd = detector if detector is not None else _get_mediapipe_face_detector(min_confidence=min_confidence)
+    res = fd.process(rgb)
+
+    faces: List[Tuple[int, int, int, int, float]] = []
+    if not getattr(res, "detections", None):
+        return faces
+
+    for det in res.detections:
+        score = float(det.score[0]) if det.score else 0.0
+        box = det.location_data.relative_bounding_box
+        x1 = int(box.xmin * w)
+        y1 = int(box.ymin * h)
+        bw = int(box.width * w)
+        bh = int(box.height * h)
+        x2 = x1 + bw
+        y2 = y1 + bh
+        x1 = int(_clamp(x1, 0, w - 1))
+        y1 = int(_clamp(y1, 0, h - 1))
+        x2 = int(_clamp(x2, x1 + 1, w))
+        y2 = int(_clamp(y2, y1 + 1, h))
+        faces.append((x1, y1, x2, y2, score))
+
+    faces.sort(key=lambda f: f[4], reverse=True)
+    return faces
