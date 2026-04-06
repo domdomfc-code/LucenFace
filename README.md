@@ -59,7 +59,7 @@ Thay `<TAI_KHOAN>` và `<TEN_REPO>` bằng đúng của bạn. Nếu dùng SSH, 
 Không cần `secrets.toml` trừ khi bạn thêm API key sau này.
 
 ### Lỗi `ImportError` khi `import cv2` trên Streamlit Cloud
-Repo đã kèm **`packages.txt`** (apt) tối thiểu cho OpenCV trên Linux. **Không** thêm `libglib2.0-0` — trên image Streamlit Cloud dễ xung đột phiên bản Debian. **Không ghi comment** trong `packages.txt`. Sau khi push: **Manage app** → **Reboot**.
+Repo đã kèm **`packages.txt`** (apt) cho OpenCV trên Linux (`libgl1`, `libglib2.0-0t64`, …). Trên **Debian Trixie** (image Cloud mới), dùng **`libglib2.0-0t64`** để có `libgthread-2.0.so.0`; **không** dùng `libglib2.0-0` (tên cũ, dễ lỗi apt). **Không ghi comment** trong `packages.txt`. Sau khi push: **Manage app** → **Reboot**.
 
 Streamlit Cloud có thể dùng **Python 3.14**; `mediapipe==0.10.14` **không còn wheel** — repo dùng **`mediapipe==0.10.33`**. Nếu pip vẫn báo không có wheel: **Settings** → **Python version** chọn **3.11** hoặc **3.12** (Advanced settings).
 
