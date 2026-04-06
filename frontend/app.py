@@ -170,13 +170,13 @@ def main() -> None:
         st.markdown("---")
         st.markdown("### Nâng cao")
         min_face_conf = st.slider("Độ tin cậy phát hiện mặt", min_value=0.3, max_value=0.9, value=0.6, step=0.05)
+        lazy_init = st.toggle("Khởi tạo engine khi bấm xử lý", value=True, help="Tránh đứng UI do MediaPipe/rembg load model.")
         st.markdown("---")
         st.markdown("### Thông số nền xanh")
         st.caption("Chuẩn mặc định: `#005BC4` (RGB 0, 91, 196).")
         blue_hex = st.color_picker("Chọn màu nền", value=BLUE)
 
     blue_rgb = tuple(int(blue_hex.lstrip("#")[i : i + 2], 16) for i in (0, 2, 4))
-    processor = _get_processor(ratio=ratio, blue_rgb=blue_rgb, min_face_conf=min_face_conf)
 
     st.markdown("### Upload ảnh")
     uploads = st.file_uploader(
@@ -199,6 +199,13 @@ def main() -> None:
         st.caption("Bấm **Bắt đầu xử lý** để chạy pipeline cho toàn bộ ảnh.")
         return
 
+    # Lazy init processor to avoid UI freeze on first load (mediapipe/rembg can take time).
+    if lazy_init:
+        with st.spinner("Đang khởi tạo engine (MediaPipe + rembg)… lần đầu có thể mất 10–60 giây."):
+            processor = _get_processor(ratio=ratio, blue_rgb=blue_rgb, min_face_conf=min_face_conf)
+    else:
+        processor = _get_processor(ratio=ratio, blue_rgb=blue_rgb, min_face_conf=min_face_conf)
+
     progress = st.progress(0)
     processed_zip_items: List[Tuple[str, bytes]] = []
 
@@ -214,11 +221,12 @@ def main() -> None:
             st.error(f"Không đọc được ảnh: `{filename}`")
             continue
 
-        try:
-            res = processor.process(pil)
-        except RuntimeError as e:
-            st.error(str(e))
-            continue
+        with st.spinner(f"Đang xử lý: {filename}"):
+            try:
+                res = processor.process(pil)
+            except RuntimeError as e:
+                st.error(str(e))
+                continue
 
         with st.container():
             st.markdown('<div class="card">', unsafe_allow_html=True)
