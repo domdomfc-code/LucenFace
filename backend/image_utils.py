@@ -426,16 +426,34 @@ def _boost_bgr_for_segmentation(bgr: np.ndarray) -> np.ndarray:
     return cv2.cvtColor(ycrcb_out, cv2.COLOR_YCrCb2BGR)
 
 
-def _refine_alpha_u8(alpha: np.ndarray, *, strong: bool = False) -> np.ndarray:
-    """Lấp lỗ nhỏ trên mặt nạ, mép mềm hơn — giảm hiện rách / lỗ trống trên ảnh tối."""
+def _refine_alpha_u8(
+    alpha: np.ndarray,
+    *,
+    strong: bool = False,
+    blur_edges: bool = True,
+) -> np.ndarray:
+    """
+    Lấp lỗ nhỏ trên mặt nạ. Gaussian trên alpha dễ làm **viền mờ rộng / halo** với ISNet
+    hoặc ảnh studio sáng — tắt bằng `blur_edges=False`.
+    """
     _require_cv2()
     if alpha.ndim != 2:
         alpha = alpha.squeeze()
     ksz = 7 if strong else 5
     k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ksz, ksz))
     x = cv2.morphologyEx(alpha, cv2.MORPH_CLOSE, k, iterations=1)
-    x = cv2.GaussianBlur(x, (3, 3), 0)
+    if blur_edges:
+        x = cv2.GaussianBlur(x, (3, 3), 0)
     return x
+
+
+def _rembg_model_skip_pymatting(model: str) -> bool:
+    """
+    Chỉ `u2net` gốc hưởng lợi rõ từ pymatting (trimap). ISNet / u2net_human_seg / silueta …
+    đã ra alpha mềm — thêm matting dễ **đôi mép, halo trắng** khi ghép nền xanh.
+    """
+    m = (model or "u2net").lower().strip()
+    return m != "u2net"
 
 
 def _decontaminate_straight_alpha_rgb(
@@ -454,7 +472,7 @@ def _decontaminate_straight_alpha_rgb(
     rf = r.astype(np.float32)
     gf = g.astype(np.float32)
     bf_c = b.astype(np.float32)
-    af = np.maximum(a.astype(np.float32) / 255.0, 0.04)
+    af = np.maximum(a.astype(np.float32) / 255.0, 0.07)
     r2 = (rf - br * (1.0 - af)) / af
     g2 = (gf - bg_c * (1.0 - af)) / af
     b2 = (bf_c - bb * (1.0 - af)) / af
@@ -733,7 +751,7 @@ def _merge_rembg_alpha_with_selfie(
     a_out = np.maximum(alpha_u8.astype(np.float32), boost * 0.91)
     a_out = np.clip(a_out, 0, 255).astype(np.uint8)
     a_out = cv2.GaussianBlur(a_out, (3, 3), 0)
-    return _refine_alpha_u8(a_out, strong=True)
+    return _refine_alpha_u8(a_out, strong=True, blur_edges=False)
 
 
 def _remove_bg_via_remove_bg_api(pil_rgb: Image.Image, api_key: str) -> Image.Image:
@@ -770,6 +788,7 @@ def _remove_bg_and_compose_blue(
     pil_segmentation: Image.Image | None = None,
     selfie_for_alpha: Any | None = None,
     remove_bg_api_key: str | None = None,
+    rembg_model_name: str = "u2net",
 ) -> Tuple[Image.Image, bool]:
     """
     rembg hoặc remove.bg API → RGBA, ghép lên nền xanh. Luôn dùng màu từ `pil_rgb`; kênh alpha có thể
@@ -791,11 +810,12 @@ def _remove_bg_and_compose_blue(
         inp_pil.save(buf, format="PNG")
         inp = buf.getvalue()
 
-        if high_key_photo:
-            # Alpha matting mạnh dễ làm tối vùng da/tóc trên ảnh studio sáng
-            out = remove(inp, session=session, alpha_matting=False)
-        elif low_light:
-            # Ảnh tối: chỉ dùng mask u2net; matting thường phá hỏng mép
+        use_pymatting = (
+            (not high_key_photo)
+            and (not low_light)
+            and (not _rembg_model_skip_pymatting(rembg_model_name))
+        )
+        if high_key_photo or low_light or not use_pymatting:
             out = remove(inp, session=session, alpha_matting=False)
         else:
             out = remove(
@@ -814,8 +834,18 @@ def _remove_bg_and_compose_blue(
     r_src, g_src, b_src = pil_rgb.convert("RGB").split()
     _, _, _, a_raw = fg.split()
     a_np = np.array(a_raw)
-    # remove.bg đã mịn mép — không refine mạnh để giữ chi tiết tóc/viền
-    a_np = _refine_alpha_u8(a_np, strong=low_light and not api_mode)
+    # Blur alpha chỉ khi u2net + pymatting + điều kiện “bình thường” — còn lại dễ halo
+    blur_alpha = (
+        (not api_mode)
+        and (not high_key_photo)
+        and (not low_light)
+        and (not _rembg_model_skip_pymatting(rembg_model_name))
+    )
+    a_np = _refine_alpha_u8(
+        a_np,
+        strong=low_light and not api_mode,
+        blur_edges=blur_alpha,
+    )
     if low_light and selfie_for_alpha is not None and not api_mode:
         a_np = _merge_rembg_alpha_with_selfie(a_np, pil_rgb, selfie_for_alpha)
     mask_ok, _ = _mask_subject_ok(a_np)
@@ -1004,7 +1034,7 @@ class PortraitProcessor:
         blue_rgb: Tuple[int, int, int] = (0, 91, 196),
         min_face_conf: float = 0.6,
         rembg_engine: str = "local",
-        rembg_model: str = "isnet-general-use",
+        rembg_model: str = "u2net",
         remove_bg_api_key: str | None = None,
     ) -> None:
         self.ratio = ratio
@@ -1067,7 +1097,7 @@ def process_portrait_image(
     _rembg_session: Any | None = None,
     _selfie_segmentation: Any | None = None,
     _rembg_engine: str = "local",
-    _rembg_model: str = "isnet-general-use",
+    _rembg_model: str = "u2net",
     _remove_bg_api_key: str | None = None,
 ) -> ProcessResult:
     """
@@ -1268,7 +1298,7 @@ def process_portrait_image(
                     session = new_session("u2net")
                 except Exception as e:
                     raise RuntimeError(
-                        "Không tải được model rembg (isnet-general-use / u2net). Kiểm tra mạng hoặc onnxruntime."
+                        "Không tải được model rembg. Kiểm tra mạng hoặc onnxruntime."
                     ) from e
 
         out_pil, mask_ok = _remove_bg_and_compose_blue(
@@ -1280,6 +1310,7 @@ def process_portrait_image(
             pil_segmentation=pil_seg,
             selfie_for_alpha=_selfie_segmentation if low_light else None,
             remove_bg_api_key=api_key_stripped if use_api else None,
+            rembg_model_name=_rembg_model if not use_api else "u2net",
         )
         if use_api:
             msg_rembg = "Đã thay nền xanh (remove.bg API — gần chất lượng trang upload)."

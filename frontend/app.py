@@ -54,7 +54,7 @@ def _cv2_troubleshoot_markdown() -> str:
 
 APP_TITLE = "Chuẩn hóa ảnh chân dung học sinh"
 # Đổi số khi deploy để kiểm tra Streamlit Cloud đã build bản mới (sidebar hiển thị).
-APP_BUILD = "3.7.0-remove-bg-api-isnet"
+APP_BUILD = "3.7.1-rembg-alpha-halo-fix"
 BLUE = "#005BC4"
 BG = "#F6F9FF"
 
@@ -448,7 +448,7 @@ def main() -> None:
         )
         force_blue_despite_uniform = False
         rembg_engine = "none"
-        rembg_model = "isnet-general-use"
+        rembg_model = "u2net"
         if replace_blue_bg:
             force_blue_despite_uniform = st.toggle(
                 "Luôn ghép nền xanh (kể cả phông đã một màu)",
@@ -476,9 +476,9 @@ def main() -> None:
                 rembg_engine = "local"
                 rembg_model = st.selectbox(
                     "Model rembg (ONNX)",
-                    options=["isnet-general-use", "u2net_human_seg", "u2net", "silueta"],
+                    options=["u2net", "isnet-general-use", "u2net_human_seg", "silueta"],
                     index=0,
-                    help="**isnet-general-use**: thường sắc mép tốt hơn u2net. **u2net_human_seg**: tối ưu người.",
+                    help="**u2net** (mặc định): ổn định với pymatting. ISNet/human_seg: không dùng pymatting (tránh viền mờ kép).",
                 )
         max_files = 50
         st.caption(f"Tối đa {max_files} ảnh/lần.")
