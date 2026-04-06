@@ -5,10 +5,20 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
-import mediapipe as mp
 import numpy as np
 from PIL import Image
-from rembg import new_session, remove
+
+# Optional heavy deps (often not available on Python 3.13+ on Windows)
+try:
+    import mediapipe as mp  # type: ignore
+except Exception:  # pragma: no cover
+    mp = None  # type: ignore
+
+try:
+    from rembg import new_session, remove  # type: ignore
+except Exception:  # pragma: no cover
+    new_session = None  # type: ignore
+    remove = None  # type: ignore
 
 
 @dataclass
@@ -196,6 +206,8 @@ def _resize_to_standard(bgr: np.ndarray, ratio_name: str) -> np.ndarray:
 
 def _remove_bg_and_compose_blue(pil_rgb: Image.Image, blue_rgb: Tuple[int, int, int], session: Any) -> Image.Image:
     """rembg → RGBA, ghép lên nền xanh cố định."""
+    if remove is None:
+        raise RuntimeError("Thiếu thư viện `rembg` trong môi trường hiện tại.")
     buf = io.BytesIO()
     pil_rgb.save(buf, format="PNG")
     inp = buf.getvalue()
@@ -224,6 +236,8 @@ def _get_mediapipe_face_detector(min_confidence: float = 0.6) -> Any:
     Trả về instance FaceDetection của MediaPipe (có thể tái sử dụng).
     Có fallback import path cho một số môi trường deploy.
     """
+    if mp is None:
+        raise RuntimeError("Thiếu thư viện `mediapipe` trong môi trường hiện tại.")
     try:
         mp_fd = mp.solutions.face_detection  # type: ignore[attr-defined]
     except Exception:
@@ -254,8 +268,8 @@ class PortraitProcessor:
         self.ratio = ratio
         self.blue_rgb = blue_rgb
         self.min_face_conf = float(min_face_conf)
-        self._fd = _get_mediapipe_face_detector(min_confidence=self.min_face_conf)
-        self._rembg_session = new_session(rembg_model)
+        self._fd = _get_mediapipe_face_detector(min_confidence=self.min_face_conf) if mp is not None else None
+        self._rembg_session = new_session(rembg_model) if new_session is not None else None
 
     def process(self, pil_img: Image.Image) -> ProcessResult:
         return process_portrait_image(
@@ -335,12 +349,14 @@ def process_portrait_image(
     out_pil = _bgr_to_pil(out_bgr).convert("RGB")
 
     try:
+        if new_session is None or remove is None:
+            raise RuntimeError("Thiếu rembg")
         session = _rembg_session if _rembg_session is not None else new_session("u2net")
         out_pil = _remove_bg_and_compose_blue(out_pil, blue_rgb=blue_rgb, session=session)
         checks["Thay nền xanh"] = CheckResult(True, "Đã thay nền xanh chuẩn.")
     except Exception:
         warnings.append("Không thể xóa nền tự động (rembg). Ảnh vẫn được crop/cân bằng sáng.")
-        checks["Thay nền xanh"] = CheckResult(False, "Lỗi rembg, bỏ qua thay nền.")
+        checks["Thay nền xanh"] = CheckResult(False, "Thiếu/lỗi rembg, bỏ qua thay nền.")
 
     return ProcessResult(status="OK", errors=errors, warnings=warnings, checks=checks, processed_image=out_pil)
 
@@ -360,28 +376,45 @@ def _detect_faces_with_detector(
     Nếu có detector (FaceDetection) thì dùng lại; nếu không thì tạo tạm (chậm hơn).
     """
     h, w = bgr.shape[:2]
-    rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-    fd = detector if detector is not None else _get_mediapipe_face_detector(min_confidence=min_confidence)
-    res = fd.process(rgb)
+    # Preferred: MediaPipe (if available)
+    if detector is not None or mp is not None:
+        rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+        fd = detector if detector is not None else _get_mediapipe_face_detector(min_confidence=min_confidence)
+        res = fd.process(rgb)
 
-    faces: List[Tuple[int, int, int, int, float]] = []
-    if not getattr(res, "detections", None):
+        faces: List[Tuple[int, int, int, int, float]] = []
+        if not getattr(res, "detections", None):
+            return faces
+
+        for det in res.detections:
+            score = float(det.score[0]) if det.score else 0.0
+            box = det.location_data.relative_bounding_box
+            x1 = int(box.xmin * w)
+            y1 = int(box.ymin * h)
+            bw = int(box.width * w)
+            bh = int(box.height * h)
+            x2 = x1 + bw
+            y2 = y1 + bh
+            x1 = int(_clamp(x1, 0, w - 1))
+            y1 = int(_clamp(y1, 0, h - 1))
+            x2 = int(_clamp(x2, x1 + 1, w))
+            y2 = int(_clamp(y2, y1 + 1, h))
+            faces.append((x1, y1, x2, y2, score))
+
+        faces.sort(key=lambda f: f[4], reverse=True)
         return faces
 
-    for det in res.detections:
-        score = float(det.score[0]) if det.score else 0.0
-        box = det.location_data.relative_bounding_box
-        x1 = int(box.xmin * w)
-        y1 = int(box.ymin * h)
-        bw = int(box.width * w)
-        bh = int(box.height * h)
-        x2 = x1 + bw
-        y2 = y1 + bh
-        x1 = int(_clamp(x1, 0, w - 1))
-        y1 = int(_clamp(y1, 0, h - 1))
-        x2 = int(_clamp(x2, x1 + 1, w))
-        y2 = int(_clamp(y2, y1 + 1, h))
-        faces.append((x1, y1, x2, y2, score))
+    # Fallback: OpenCV Haar Cascade (works on most Python versions)
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+    face_cascade = cv2.CascadeClassifier(cascade_path)
+    dets = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60))
 
-    faces.sort(key=lambda f: f[4], reverse=True)
-    return faces
+    faces2: List[Tuple[int, int, int, int, float]] = []
+    for (x, y, ww, hh) in dets:
+        x1 = int(_clamp(x, 0, w - 1))
+        y1 = int(_clamp(y, 0, h - 1))
+        x2 = int(_clamp(x + ww, x1 + 1, w))
+        y2 = int(_clamp(y + hh, y1 + 1, h))
+        faces2.append((x1, y1, x2, y2, 0.50))  # heuristic score
+    return faces2

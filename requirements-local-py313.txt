@@ -1,0 +1,11 @@
+streamlit>=1.32,<2
+opencv-python-headless==4.10.0.84
+Pillow>=10,<12
+numpy>=1.26,<2.1
+
+# Optional (thường KHÓ cài trên Python 3.13 Windows):
+# mediapipe==0.10.33
+# rembg>=2.0,<3
+# onnxruntime>=1.16,<2
+# protobuf>=4.25.3,<5
+
