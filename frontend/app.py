@@ -20,7 +20,7 @@ from backend.image_utils import PortraitProcessor, ProcessResult, pil_to_jpeg_by
 
 APP_TITLE = "Chuẩn hóa ảnh chân dung học sinh"
 # Đổi số khi deploy để kiểm tra Streamlit Cloud đã build bản mới (sidebar hiển thị).
-APP_BUILD = "3.0-checklist-markdown-luma"
+APP_BUILD = "3.1-checklist-dataframe"
 BLUE = "#005BC4"
 BG = "#F6F9FF"
 
@@ -253,12 +253,18 @@ def _sidebar_reopen_button() -> None:
 
 
 def _render_checklist(checks: Dict[str, Dict[str, str]]) -> None:
-    """Streamlit Cloud có thể không render HTML phức tạp trong markdown — dùng Markdown thuần."""
-    for name, payload in checks.items():
-        ok = payload["ok"]
-        msg = str(payload["message"]).replace("\n", " ")
-        icon = "✅" if ok else "❌"
-        st.markdown(f"{icon} **{name}** — {msg}")
+    """Bảng dữ liệu — không qua Markdown/HTML (tránh lộ thẻ hoặc ký tự bị hiểu nhầm)."""
+    if not checks:
+        return
+    rows = [
+        {
+            "Đạt": "Có" if payload["ok"] else "Không",
+            "Tiêu chí": str(name),
+            "Chi tiết": str(payload["message"]).strip(),
+        }
+        for name, payload in checks.items()
+    ]
+    st.dataframe(rows, use_container_width=True, hide_index=True)
 
 
 def _result_to_checks_dict(res: ProcessResult) -> Dict[str, Dict[str, str]]:

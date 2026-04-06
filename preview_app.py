@@ -198,11 +198,17 @@ def _inject_css() -> None:
 
 
 def _render_checklist(checks: Dict[str, Dict[str, str]]) -> None:
-    for name, payload in checks.items():
-        ok = payload["ok"]
-        msg = str(payload["message"]).replace("\n", " ")
-        icon = "✅" if ok else "❌"
-        st.markdown(f"{icon} **{name}** — {msg}")
+    if not checks:
+        return
+    rows = [
+        {
+            "Đạt": "Có" if payload["ok"] else "Không",
+            "Tiêu chí": str(name),
+            "Chi tiết": str(payload["message"]).strip(),
+        }
+        for name, payload in checks.items()
+    ]
+    st.dataframe(rows, use_container_width=True, hide_index=True)
 
 
 def _fake_processed_preview(pil: Image.Image, blue_hex: str) -> Image.Image:
