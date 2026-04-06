@@ -99,13 +99,28 @@ def _background_uniformity_check(bgr: np.ndarray, border_pct: float = 0.08) -> T
     return False, f"Nền có thể không đơn sắc (độ lệch chuẩn màu ~{std:.1f})."
 
 
-def _equalize_hist_y_channel(bgr: np.ndarray) -> np.ndarray:
+def _enhance_luminance_y_channel(bgr: np.ndarray) -> np.ndarray:
+    """
+    Chỉnh sáng nhẹ trên kênh Y: CLAHE có giới hạn độ tương phản + trộn với Y gốc.
+    Tránh equalizeHist toàn cục (hay làm cháy sáng / mất tông da).
+    """
     _require_cv2()
     ycrcb = cv2.cvtColor(bgr, cv2.COLOR_BGR2YCrCb)
     y, cr, cb = cv2.split(ycrcb)
-    y_eq = cv2.equalizeHist(y)
-    ycrcb_eq = cv2.merge([y_eq, cr, cb])
-    return cv2.cvtColor(ycrcb_eq, cv2.COLOR_YCrCb2BGR)
+    mean_y = float(np.mean(y))
+
+    # Đã đủ sáng — không kéo thêm (user hay gặp “phơi sáng” quá tay)
+    if mean_y >= 122:
+        return bgr
+
+    clahe = cv2.createCLAHE(clipLimit=1.8, tileGridSize=(8, 8))
+    y_adj = clahe.apply(y)
+    # mean_y thấp → cần chỉnh nhiều hơn một chút; vẫn giữ đa số pixel gốc
+    t = _clamp((110.0 - mean_y) / 75.0, 0.0, 1.0)
+    w_orig = _clamp(0.62 + 0.28 * (1.0 - t), 0.55, 0.88)
+    y_out = cv2.addWeighted(y, w_orig, y_adj, 1.0 - w_orig, 0).astype(np.uint8)
+    ycrcb_out = cv2.merge([y_out, cr, cb])
+    return cv2.cvtColor(ycrcb_out, cv2.COLOR_YCrCb2BGR)
 
 
 def _face_center_h_check(face_xyxy: Tuple[int, int, int, int], img_w: int, tolerance: float = 0.12) -> Tuple[bool, str]:
@@ -348,7 +363,7 @@ def process_portrait_image(
     Pipeline backend:
     - Phát hiện khuôn mặt (đúng 1 mặt)
     - Validation: vị trí, tỷ lệ, sáng/tương phản, nền
-    - Auto-fix: crop tỷ lệ, histogram equalization
+    - Auto-fix: crop tỷ lệ, chỉnh sáng nhẹ (CLAHE + trộn Y, không equalize toàn cục)
     - Thay nền: rembg + nền xanh
     """
     errors: List[str] = []
@@ -405,7 +420,7 @@ def process_portrait_image(
     crop_rect = _compute_crop_rect(w0, h0, crop_face, aspect=aspect)
     cropped = _safe_crop_with_pad(bgr0, crop_rect)
 
-    cropped_eq = _equalize_hist_y_channel(cropped)
+    cropped_eq = _enhance_luminance_y_channel(cropped)
 
     out_bgr = _resize_to_standard(cropped_eq, ratio_name=ratio)
     out_pil = _bgr_to_pil(out_bgr).convert("RGB")
