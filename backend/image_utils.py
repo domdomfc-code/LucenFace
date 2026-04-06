@@ -278,10 +278,17 @@ def _compute_brightness_contrast(bgr: np.ndarray) -> Tuple[float, float]:
     return brightness, contrast
 
 
-def _background_uniformity_check(bgr: np.ndarray, border_pct: float = 0.08) -> Tuple[bool, str]:
+def _background_uniformity_check(
+    bgr: np.ndarray,
+    border_pct: float = 0.08,
+    *,
+    standard_wording: bool = False,
+) -> Tuple[bool, str]:
     """
     Heuristic: sample border pixels and check color variance.
     If standard deviation of RGB channels is small, background is likely solid.
+
+    `standard_wording=True`: dùng cho khung đầu ra — gắn với tiêu chuẩn “phông một màu”.
     """
     h, w = bgr.shape[:2]
     bw = max(2, int(w * border_pct))
@@ -299,7 +306,11 @@ def _background_uniformity_check(bgr: np.ndarray, border_pct: float = 0.08) -> T
     std = border.astype(np.float32).std(axis=0).mean()
 
     if std < 18.0:
+        if standard_wording:
+            return True, f"Đạt tiêu chuẩn — phông gần một màu (σ màu ~{std:.1f})."
         return True, f"Nền tương đối đơn sắc (độ lệch chuẩn màu ~{std:.1f})."
+    if standard_wording:
+        return False, f"Chưa đạt — viền không đồng đều một màu (σ ~{std:.1f}), nên ghép nền xanh nếu cần."
     return False, f"Nền có thể không đơn sắc (độ lệch chuẩn màu ~{std:.1f})."
 
 
@@ -908,6 +919,7 @@ class PortraitProcessor:
         *,
         prefer_face_crop: bool = False,
         replace_background: bool = True,
+        skip_rembg_if_uniform_background: bool = True,
     ) -> ProcessResult:
         return process_portrait_image(
             pil_img,
@@ -916,6 +928,7 @@ class PortraitProcessor:
             min_face_conf=self.min_face_conf,
             prefer_face_crop=prefer_face_crop,
             replace_background=replace_background,
+            skip_rembg_if_uniform_background=skip_rembg_if_uniform_background,
             _mp_face_detector=self._fd,
             _rembg_session=self._rembg_session,
             _selfie_segmentation=self._selfie,
@@ -929,6 +942,7 @@ def process_portrait_image(
     min_face_conf: float = 0.6,
     prefer_face_crop: bool = False,
     replace_background: bool = True,
+    skip_rembg_if_uniform_background: bool = True,
     _mp_face_detector: Any | None = None,
     _rembg_session: Any | None = None,
     _selfie_segmentation: Any | None = None,
@@ -941,6 +955,8 @@ def process_portrait_image(
     - Ảnh thiếu sáng: có thể tinh chỉnh bbox crop bằng MediaPipe Selfie Segmentation (tóc/vai).
     - Chỉnh sáng nhẹ (CLAHE + trộn Y) khi cần
     - `replace_background`: True → rembg + nền xanh; False → chỉ crop/scale theo tỷ lệ, giữ nền gốc.
+    - Khi `replace_background` và `skip_rembg_if_uniform_background`: nếu viền khung đầu ra gần một màu
+      (tiêu chuẩn phông), bỏ qua rembg và giữ nền gốc.
     """
     errors: List[str] = []
     warnings: List[str] = []
@@ -1076,10 +1092,20 @@ def process_portrait_image(
         out_bgr = _resize_cover_to_standard(cropped_eq, ratio_name=ratio)
     out_pil = _bgr_to_pil(out_bgr).convert("RGB")
 
+    ok_bg_final, msg_bg_final = _background_uniformity_check(out_bgr, standard_wording=True)
+    checks["Phông nền (khung đầu ra)"] = CheckResult(ok_bg_final, msg_bg_final)
+
     if not replace_background:
         checks["Thay nền xanh"] = CheckResult(
             True,
             "Đã tắt — chỉ chuẩn hóa khung theo tỷ lệ đã chọn và cân bằng sáng (giữ nền gốc).",
+        )
+        return ProcessResult(status="OK", errors=errors, warnings=warnings, checks=checks, processed_image=out_pil)
+
+    if skip_rembg_if_uniform_background and ok_bg_final:
+        checks["Thay nền xanh"] = CheckResult(
+            True,
+            "Bỏ qua ghép nền xanh — phông trên khung đầu ra đã đơn sắc (đạt tiêu chuẩn một màu, giữ nguyên nền).",
         )
         return ProcessResult(status="OK", errors=errors, warnings=warnings, checks=checks, processed_image=out_pil)
 

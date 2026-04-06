@@ -41,7 +41,7 @@ def _cv2_troubleshoot_markdown() -> str:
 
 APP_TITLE = "Chuẩn hóa ảnh chân dung học sinh"
 # Đổi số khi deploy để kiểm tra Streamlit Cloud đã build bản mới (sidebar hiển thị).
-APP_BUILD = "3.5.2-process-signature-compat"
+APP_BUILD = "3.6.0-uniform-bg-skip-rembg"
 BLUE = "#005BC4"
 BG = "#F6F9FF"
 
@@ -332,19 +332,19 @@ def _run_processor(
     *,
     prefer_face_crop: bool,
     replace_blue_bg: bool,
+    skip_rembg_if_uniform_background: bool = True,
 ) -> ProcessResult:
     """
-    Gọi `PortraitProcessor.process` — chỉ truyền `replace_background` nếu chữ ký có tham số đó
+    Gọi `PortraitProcessor.process` — chỉ truyền các kwarg có trong chữ ký
     (tránh TypeError khi worker Cloud chạy bản `backend` cũ hơn `frontend`).
     """
     params = inspect.signature(processor.process).parameters
+    kw: Dict[str, object] = {}
     if "replace_background" in params:
-        return processor.process(
-            pil,
-            prefer_face_crop=prefer_face_crop,
-            replace_background=replace_blue_bg,
-        )
-    return processor.process(pil, prefer_face_crop=prefer_face_crop)
+        kw["replace_background"] = replace_blue_bg
+    if "skip_rembg_if_uniform_background" in params:
+        kw["skip_rembg_if_uniform_background"] = skip_rembg_if_uniform_background
+    return processor.process(pil, prefer_face_crop=prefer_face_crop, **kw)
 
 
 def main() -> None:
@@ -406,9 +406,9 @@ def main() -> None:
               - Vị trí mặt gần trung tâm ngang
               - Tỷ lệ khuôn mặt hợp lý
               - Độ sáng & tương phản đủ
-              - Nền tương đối đơn sắc
+              - **Phông nền**: ảnh gốc & khung đầu ra — viền gần **một màu** (đạt chuẩn) hay không
             - **Khung**: mặc định giữ ảnh gốc (scale); cắt theo mặt nếu bạn bật hoặc nền không đơn sắc.
-            - **Tự động**: cân bằng sáng (khi cần); nền xanh chỉ khi bạn bật ghép nền.
+            - **Ghép nền xanh**: khi bật rembg, nếu khung đầu ra **đã có phông một màu** thì **không** ghép thêm (trừ khi bạn bật “luôn ghép”).
             """
         )
         st.markdown("---")
@@ -421,8 +421,15 @@ def main() -> None:
         replace_blue_bg = st.toggle(
             "Tự động ghép nền xanh (rembg)",
             value=True,
-            help="Bật: tách nền rồi ghép màu nền bạn chọn. Tắt: chỉ crop/scale theo tỷ lệ đã chọn, giữ nền ảnh gốc (vẫn cân bằng sáng khi cần).",
+            help="Bật: cho phép tách nền và ghép màu (nếu ảnh đầu ra chưa có phông một màu). Tắt: chỉ crop/scale, giữ nền gốc.",
         )
+        force_blue_despite_uniform = False
+        if replace_blue_bg:
+            force_blue_despite_uniform = st.toggle(
+                "Luôn ghép nền xanh (kể cả phông đã một màu)",
+                value=False,
+                help="Mặc định tắt: phông trên khung đầu ra đạt chuẩn một màu thì giữ nguyên, không rembg. Bật: luôn ghép màu nền bạn chọn.",
+            )
         max_files = 50
         st.caption(f"Tối đa {max_files} ảnh/lần.")
         st.markdown("---")
@@ -521,6 +528,7 @@ def main() -> None:
                     pil,
                     prefer_face_crop=prefer_face_crop,
                     replace_blue_bg=replace_blue_bg,
+                    skip_rembg_if_uniform_background=not force_blue_despite_uniform,
                 )
             except RuntimeError as e:
                 st.error(str(e))
