@@ -99,6 +99,56 @@ def _background_uniformity_check(bgr: np.ndarray, border_pct: float = 0.08) -> T
     return False, f"Nền có thể không đơn sắc (độ lệch chuẩn màu ~{std:.1f})."
 
 
+def _boost_bgr_for_segmentation(bgr: np.ndarray) -> np.ndarray:
+    """
+    Tăng sáng/tương phản mạnh hơn bước CLAHE thường — chỉ dùng làm *đầu vào* rembg
+    (giúp phân tách chủ thể/nền khi ảnh tối). Màu đầu ra cuối cùng vẫn lấy từ pipeline CLAHE nhẹ.
+    """
+    _require_cv2()
+    ycrcb = cv2.cvtColor(bgr, cv2.COLOR_BGR2YCrCb)
+    y, cr, cb = cv2.split(ycrcb)
+    mean_y = float(np.mean(y))
+    clahe = cv2.createCLAHE(clipLimit=2.8, tileGridSize=(8, 8))
+    y_adj = clahe.apply(y)
+    strength = _clamp((92.0 - mean_y) / 88.0, 0.35, 0.72)
+    y_mix = cv2.addWeighted(y, 1.0 - strength, y_adj, strength, 0).astype(np.float32)
+    # Gamma nhẹ (<1) làm sáng vùng tối
+    y_out = np.clip(((y_mix / 255.0) ** 0.88) * 255.0, 0, 255).astype(np.uint8)
+    ycrcb_out = cv2.merge([y_out, cr, cb])
+    return cv2.cvtColor(ycrcb_out, cv2.COLOR_YCrCb2BGR)
+
+
+def _refine_alpha_u8(alpha: np.ndarray) -> np.ndarray:
+    """Lấp lỗ nhỏ trên mặt nạ, mép mềm hơn — giảm hiện rách / lỗ trống trên ảnh tối."""
+    _require_cv2()
+    if alpha.ndim != 2:
+        alpha = alpha.squeeze()
+    k5 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    x = cv2.morphologyEx(alpha, cv2.MORPH_CLOSE, k5, iterations=1)
+    x = cv2.GaussianBlur(x, (3, 3), 0)
+    return x
+
+
+def _mask_subject_ok(alpha: np.ndarray) -> Tuple[bool, str]:
+    """Heuristic: mặt nạ toàn nền / toàn chủ thể / trống giữa → không tin cậy."""
+    h, w = alpha.shape[:2]
+    if h < 8 or w < 8:
+        return False, "Kích thước mặt nạ không hợp lệ."
+    fg = float(np.mean(alpha > 128))
+    if fg < 0.055:
+        return False, "Diện tích chủ thể quá nhỏ sau tách nền."
+    if fg > 0.93:
+        return False, "Mặt nạ gần như phủ kín ảnh — tách nền không tin cậy."
+    cy, cx = h // 2, w // 2
+    ch, cw = max(4, h // 2), max(4, w // 2)
+    y1, y2 = max(0, cy - ch // 2), min(h, cy + ch // 2)
+    x1, x2 = max(0, cx - cw // 2), min(w, cx + cw // 2)
+    center_mean = float(np.mean(alpha[y1:y2, x1:x2]))
+    if center_mean < 52.0:
+        return False, "Vùng trung tâm gần như trong suốt — tách nền có thể sai."
+    return True, ""
+
+
 def _enhance_luminance_y_channel(bgr: np.ndarray, force_skip: bool = False) -> np.ndarray:
     """
     Chỉnh sáng rất nhẹ: CLAHE clip thấp + tối đa ~17% trộn với Y gốc.
@@ -288,16 +338,28 @@ def _remove_bg_and_compose_blue(
     blue_rgb: Tuple[int, int, int],
     session: Any,
     high_key_photo: bool = False,
-) -> Image.Image:
-    """rembg → RGBA, ghép lên nền xanh. Ảnh sáng/high-key: matting nhẹ hoặc tắt để tránh tối màu & mép cứng."""
+    low_light: bool = False,
+    pil_segmentation: Image.Image | None = None,
+) -> Tuple[Image.Image, bool]:
+    """
+    rembg → RGBA, ghép lên nền xanh. Luôn dùng màu từ `pil_rgb`; kênh alpha có thể suy từ ảnh boost
+    (`pil_segmentation`) khi ảnh tối.
+
+    Ảnh sáng: tắt matting (tránh tối da). Ảnh tối: tắt matting + boost đầu vào — alpha matting
+    dễ làm rách/lỗ mặt nạ khi tương phản thấp.
+    """
     if remove is None:
         raise RuntimeError("Thiếu thư viện `rembg` trong môi trường hiện tại.")
+    inp_pil = pil_segmentation if pil_segmentation is not None else pil_rgb
     buf = io.BytesIO()
-    pil_rgb.save(buf, format="PNG")
+    inp_pil.save(buf, format="PNG")
     inp = buf.getvalue()
 
     if high_key_photo:
         # Alpha matting mạnh dễ làm tối vùng da/tóc trên ảnh studio sáng
+        out = remove(inp, session=session, alpha_matting=False)
+    elif low_light:
+        # Ảnh tối: chỉ dùng mask u2net; matting thường phá hỏng mép
         out = remove(inp, session=session, alpha_matting=False)
     else:
         out = remove(
@@ -309,9 +371,20 @@ def _remove_bg_and_compose_blue(
             alpha_matting_erode_size=4,
         )
     fg = Image.open(io.BytesIO(out)).convert("RGBA")
-    bg = Image.new("RGBA", fg.size, blue_rgb + (255,))
-    comp = Image.alpha_composite(bg, fg).convert("RGB")
-    return comp
+    if fg.size != pil_rgb.size:
+        _resample = getattr(getattr(Image, "Resampling", Image), "LANCZOS", Image.LANCZOS)
+        fg = fg.resize(pil_rgb.size, _resample)
+
+    r_src, g_src, b_src = pil_rgb.convert("RGB").split()
+    _, _, _, a_raw = fg.split()
+    a_np = np.array(a_raw)
+    a_np = _refine_alpha_u8(a_np)
+    mask_ok, _ = _mask_subject_ok(a_np)
+    a = Image.fromarray(a_np, mode="L")
+    fg2 = Image.merge("RGBA", (r_src, g_src, b_src, a))
+    bg = Image.new("RGBA", fg2.size, blue_rgb + (255,))
+    comp = Image.alpha_composite(bg, fg2).convert("RGB")
+    return comp, mask_ok
 
 
 def detect_faces_mediapipe(bgr: np.ndarray, min_confidence: float = 0.6) -> List[Tuple[int, int, int, int, float]]:
@@ -483,23 +556,32 @@ def process_portrait_image(
 
     # Studio / nền trắng: rembg matting dễ tối màu → tắt matting, giữ màu gần gốc hơn
     high_key = brightness >= 128 or br_crop >= 108
+    # Ảnh tối / tương phản thấp: matting + rembg trên ảnh chưa boost dễ rách mặt nạ → boost đầu vào + tắt matting
+    low_light = (not high_key) and (brightness < 108 or br_crop < 88 or not ok_bc)
+    pil_seg = _bgr_to_pil(_boost_bgr_for_segmentation(out_bgr)) if low_light else None
 
     try:
         if new_session is None or remove is None:
             raise RuntimeError("Thiếu rembg")
         session = _rembg_session if _rembg_session is not None else new_session("u2net")
-        out_pil = _remove_bg_and_compose_blue(
+        out_pil, mask_ok = _remove_bg_and_compose_blue(
             out_pil,
             blue_rgb=blue_rgb,
             session=session,
             high_key_photo=high_key,
+            low_light=low_light,
+            pil_segmentation=pil_seg,
         )
-        msg_rembg = (
-            "Đã thay nền xanh (ảnh sáng: tách nền không matting để giữ màu)."
-            if high_key
-            else "Đã thay nền xanh chuẩn."
-        )
-        checks["Thay nền xanh"] = CheckResult(True, msg_rembg)
+        if high_key:
+            msg_rembg = "Đã thay nền xanh (ảnh sáng: tách nền không matting để giữ màu)."
+        elif low_light:
+            msg_rembg = "Đã thay nền xanh (ảnh tối: tách nền với boost + không matting)."
+        else:
+            msg_rembg = "Đã thay nền xanh chuẩn."
+        if not mask_ok:
+            msg_rembg = "Tách nền không đủ tin cậy — nên chụp lại ảnh sáng, tương phản hơn."
+            warnings.append(msg_rembg)
+        checks["Thay nền xanh"] = CheckResult(mask_ok, msg_rembg)
     except Exception:
         warnings.append("Không thể xóa nền tự động (rembg). Ảnh vẫn được scale/cân bằng sáng.")
         checks["Thay nền xanh"] = CheckResult(False, "Thiếu/lỗi rembg, bỏ qua thay nền.")
