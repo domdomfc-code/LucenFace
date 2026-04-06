@@ -212,6 +212,16 @@ def main() -> None:
         st.caption("Bấm **Bắt đầu xử lý** để chạy pipeline cho toàn bộ ảnh.")
         return
 
+    # Preflight: ensure OpenCV is importable before creating cached processor.
+    # If cv2 is missing, `st.cache_resource` would cache the exception and keep failing.
+    try:
+        import cv2  # type: ignore  # noqa: F401
+    except Exception as e:
+        st.error("Thiếu OpenCV (`cv2`) hoặc OpenCV không import được trong môi trường hiện tại.")
+        st.code(str(e))
+        st.info("Hãy cài `opencv-python-headless` (local: dùng venv) rồi chạy lại.")
+        st.stop()
+
     # Lazy init processor to avoid UI freeze on first load (mediapipe/rembg can take time).
     if lazy_init:
         with st.spinner("Đang khởi tạo engine (MediaPipe + rembg)… lần đầu có thể mất 10–60 giây."):

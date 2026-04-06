@@ -8,8 +8,10 @@ from typing import Any, Dict, List, Optional, Tuple
 # and show a friendly error instead of crashing at import-time.
 try:
     import cv2  # type: ignore
-except Exception:  # pragma: no cover
+    _CV2_IMPORT_ERROR: str | None = None
+except Exception as e:  # pragma: no cover
     cv2 = None  # type: ignore
+    _CV2_IMPORT_ERROR = repr(e)
 import numpy as np
 from PIL import Image
 
@@ -386,9 +388,8 @@ def pil_to_jpeg_bytes(pil_img: Image.Image, quality: int = 95) -> bytes:
 
 def _require_cv2() -> None:
     if cv2 is None:
-        raise RuntimeError(
-            "Thiếu OpenCV (`cv2`). Hãy cài `opencv-python-headless` rồi chạy lại."
-        )
+        detail = f" Chi tiết: {_CV2_IMPORT_ERROR}" if _CV2_IMPORT_ERROR else ""
+        raise RuntimeError("Thiếu OpenCV (`cv2`). Hãy cài `opencv-python-headless` rồi chạy lại." + detail)
 
 
 def _detect_faces_with_detector(
