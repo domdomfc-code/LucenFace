@@ -19,7 +19,7 @@ from backend.image_utils import PortraitProcessor, ProcessResult, pil_to_jpeg_by
 
 APP_TITLE = "Chuẩn hóa ảnh chân dung học sinh"
 # Đổi số khi deploy để kiểm tra Streamlit Cloud đã build bản mới (sidebar hiển thị).
-APP_BUILD = "2.6-fast-apt-no-mesa"
+APP_BUILD = "2.7-mp-fallback-haar"
 BLUE = "#005BC4"
 BG = "#F6F9FF"
 

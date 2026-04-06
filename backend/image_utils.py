@@ -263,6 +263,16 @@ def _get_mediapipe_face_detector(min_confidence: float = 0.6) -> Any:
     return mp_fd.FaceDetection(model_selection=1, min_detection_confidence=float(min_confidence))
 
 
+def _try_get_mediapipe_face_detector(min_confidence: float = 0.6) -> Any | None:
+    """Khởi tạo Face Detection nếu được; lỗi (Cloud/protobuf/path) → None, pipeline dùng Haar."""
+    if mp is None:
+        return None
+    try:
+        return _get_mediapipe_face_detector(min_confidence=min_confidence)
+    except Exception:
+        return None
+
+
 class PortraitProcessor:
     """
     Bộ xử lý ảnh chân dung có cache tài nguyên nặng (MediaPipe detector, rembg session).
@@ -281,8 +291,13 @@ class PortraitProcessor:
         self.blue_rgb = blue_rgb
         self.min_face_conf = float(min_face_conf)
         _require_cv2()
-        self._fd = _get_mediapipe_face_detector(min_confidence=self.min_face_conf) if mp is not None else None
-        self._rembg_session = new_session(rembg_model) if new_session is not None else None
+        self._fd = _try_get_mediapipe_face_detector(min_confidence=self.min_face_conf)
+        self._rembg_session = None
+        if new_session is not None:
+            try:
+                self._rembg_session = new_session(rembg_model)
+            except Exception:
+                self._rembg_session = None
 
     def process(self, pil_img: Image.Image) -> ProcessResult:
         return process_portrait_image(
@@ -402,10 +417,11 @@ def _detect_faces_with_detector(
     """
     _require_cv2()
     h, w = bgr.shape[:2]
-    # Preferred: MediaPipe (if available)
-    if detector is not None or mp is not None:
+    fd = detector
+    if fd is None:
+        fd = _try_get_mediapipe_face_detector(min_confidence=min_confidence)
+    if fd is not None:
         rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-        fd = detector if detector is not None else _get_mediapipe_face_detector(min_confidence=min_confidence)
         res = fd.process(rgb)
 
         faces: List[Tuple[int, int, int, int, float]] = []
@@ -430,7 +446,7 @@ def _detect_faces_with_detector(
         faces.sort(key=lambda f: f[4], reverse=True)
         return faces
 
-    # Fallback: OpenCV Haar Cascade (works on most Python versions)
+    # Fallback: OpenCV Haar Cascade (MediaPipe không khởi tạo được hoặc không cài)
     gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
     cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
     face_cascade = cv2.CascadeClassifier(cascade_path)
