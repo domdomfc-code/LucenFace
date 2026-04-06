@@ -1,4 +1,3 @@
-# Thư viện hệ thống (Debian/Ubuntu) cho OpenCV & xử lý ảnh trên Streamlit Cloud
 libglib2.0-0
 libsm6
 libxext6
