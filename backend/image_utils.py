@@ -902,13 +902,20 @@ class PortraitProcessor:
             except Exception:
                 self._rembg_session = None
 
-    def process(self, pil_img: Image.Image, *, prefer_face_crop: bool = False) -> ProcessResult:
+    def process(
+        self,
+        pil_img: Image.Image,
+        *,
+        prefer_face_crop: bool = False,
+        replace_background: bool = True,
+    ) -> ProcessResult:
         return process_portrait_image(
             pil_img,
             ratio=self.ratio,
             blue_rgb=self.blue_rgb,
             min_face_conf=self.min_face_conf,
             prefer_face_crop=prefer_face_crop,
+            replace_background=replace_background,
             _mp_face_detector=self._fd,
             _rembg_session=self._rembg_session,
             _selfie_segmentation=self._selfie,
@@ -921,6 +928,7 @@ def process_portrait_image(
     blue_rgb: Tuple[int, int, int] = (0, 91, 196),
     min_face_conf: float = 0.6,
     prefer_face_crop: bool = False,
+    replace_background: bool = True,
     _mp_face_detector: Any | None = None,
     _rembg_session: Any | None = None,
     _selfie_segmentation: Any | None = None,
@@ -932,7 +940,7 @@ def process_portrait_image(
     - Crop theo mặt chỉ khi: prefer_face_crop hoặc nền không đơn sắc; không thì scale toàn ảnh (cover).
     - Ảnh thiếu sáng: có thể tinh chỉnh bbox crop bằng MediaPipe Selfie Segmentation (tóc/vai).
     - Chỉnh sáng nhẹ (CLAHE + trộn Y) khi cần
-    - Thay nền: rembg + nền xanh
+    - `replace_background`: True → rembg + nền xanh; False → chỉ crop/scale theo tỷ lệ, giữ nền gốc.
     """
     errors: List[str] = []
     warnings: List[str] = []
@@ -1067,6 +1075,13 @@ def process_portrait_image(
     else:
         out_bgr = _resize_cover_to_standard(cropped_eq, ratio_name=ratio)
     out_pil = _bgr_to_pil(out_bgr).convert("RGB")
+
+    if not replace_background:
+        checks["Thay nền xanh"] = CheckResult(
+            True,
+            "Đã tắt — chỉ chuẩn hóa khung theo tỷ lệ đã chọn và cân bằng sáng (giữ nền gốc).",
+        )
+        return ProcessResult(status="OK", errors=errors, warnings=warnings, checks=checks, processed_image=out_pil)
 
     # Studio / nền trắng: rembg matting dễ tối màu → tắt matting, giữ màu gần gốc hơn
     high_key = brightness >= 128 or br_crop >= 108

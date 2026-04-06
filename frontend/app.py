@@ -40,7 +40,7 @@ def _cv2_troubleshoot_markdown() -> str:
 
 APP_TITLE = "Chuẩn hóa ảnh chân dung học sinh"
 # Đổi số khi deploy để kiểm tra Streamlit Cloud đã build bản mới (sidebar hiển thị).
-APP_BUILD = "3.4.5-despill-alpha-refine"
+APP_BUILD = "3.5.0-toggle-blue-bg"
 BLUE = "#005BC4"
 BG = "#F6F9FF"
 
@@ -330,9 +330,9 @@ def main() -> None:
               <div class="brand-sub">Portrait Standardizer • Build {APP_BUILD}</div>
             </div>
           </div>
-          <div class="top-actions">
+            <div class="top-actions">
             <span class="pill">Batch ≤ 50 ảnh</span>
-            <span class="pill">Nền xanh</span>
+            <span class="pill">Nền xanh (tùy chọn)</span>
           </div>
         </div>
         """,
@@ -341,7 +341,7 @@ def main() -> None:
 
     st.markdown(f'<div class="app-title">{APP_TITLE}</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="app-subtitle">Kéo & thả ảnh để chuẩn hóa (khung tùy chọn, cân bằng sáng, thay nền xanh, tải ZIP).</div>',
+        '<div class="app-subtitle">Kéo & thả ảnh để chuẩn hóa (khung tùy chọn, cân bằng sáng; có thể ghép nền xanh hoặc chỉ giữ nền gốc — tải ZIP).</div>',
         unsafe_allow_html=True,
     )
 
@@ -376,7 +376,7 @@ def main() -> None:
               - Độ sáng & tương phản đủ
               - Nền tương đối đơn sắc
             - **Khung**: mặc định giữ ảnh gốc (scale); cắt theo mặt nếu bạn bật hoặc nền không đơn sắc.
-            - **Tự động**: cân bằng sáng (khi cần), thay nền xanh.
+            - **Tự động**: cân bằng sáng (khi cần); nền xanh chỉ khi bạn bật ghép nền.
             """
         )
         st.markdown("---")
@@ -386,22 +386,37 @@ def main() -> None:
             value=False,
             help="Tắt: giữ khung gốc, chỉ scale về khung chuẩn — trừ khi nền không đơn sắc (tự cắt theo mặt). Bật: luôn crop theo mặt.",
         )
+        replace_blue_bg = st.toggle(
+            "Tự động ghép nền xanh (rembg)",
+            value=True,
+            help="Bật: tách nền rồi ghép màu nền bạn chọn. Tắt: chỉ crop/scale theo tỷ lệ đã chọn, giữ nền ảnh gốc (vẫn cân bằng sáng khi cần).",
+        )
         max_files = 50
         st.caption(f"Tối đa {max_files} ảnh/lần.")
         st.markdown("---")
         st.markdown("### Nâng cao")
         min_face_conf = st.slider("Độ tin cậy phát hiện mặt", min_value=0.3, max_value=0.9, value=0.6, step=0.05)
-        lazy_init = st.toggle("Khởi tạo engine khi bấm xử lý", value=True, help="Tránh đứng UI do MediaPipe/rembg load model.")
+        lazy_init = st.toggle(
+            "Khởi tạo engine khi bấm xử lý",
+            value=True,
+            help="Tránh đứng UI khi tải MediaPipe (và rembg nếu bật ghép nền xanh).",
+        )
         st.markdown("---")
-        st.markdown("### Thông số nền xanh")
-        st.caption("Chuẩn mặc định: `#005BC4` (RGB 0, 91, 196).")
-        blue_hex = st.color_picker("Chọn màu nền", value=BLUE)
+        if replace_blue_bg:
+            st.markdown("### Thông số nền xanh")
+            st.caption("Chuẩn mặc định: `#005BC4` (RGB 0, 91, 196).")
+            blue_hex = st.color_picker("Chọn màu nền", value=BLUE)
+        else:
+            st.caption("Ghép nền xanh đang **tắt** — không dùng rembg; màu nền bên dưới không áp dụng.")
 
-    blue_rgb = tuple(int(blue_hex.lstrip("#")[i : i + 2], 16) for i in (0, 2, 4))
+    if replace_blue_bg:
+        blue_rgb = tuple(int(blue_hex.lstrip("#")[i : i + 2], 16) for i in (0, 2, 4))
+    else:
+        blue_rgb = tuple(int(BLUE.lstrip("#")[i : i + 2], 16) for i in (0, 2, 4))
 
     st.markdown("### Kéo & thả ảnh")
     st.markdown(
-        '<div class="card-soft muted">Mẹo: ảnh rõ mặt, thẳng góc. Cắt theo mặt chỉ khi bạn bật trong sidebar hoặc nền không đơn sắc.</div>',
+        '<div class="card-soft muted">Mẹo: ảnh rõ mặt, thẳng góc. Bật/tắt ghép nền xanh trong sidebar trước khi xử lý. Cắt theo mặt khi bạn bật hoặc nền không đơn sắc.</div>',
         unsafe_allow_html=True,
     )
     uploads = st.file_uploader(
@@ -435,8 +450,9 @@ def main() -> None:
         st.stop()
 
     # Lazy init processor to avoid UI freeze on first load (mediapipe/rembg can take time).
+    _spin_engine = "MediaPipe + rembg" if replace_blue_bg else "MediaPipe"
     if lazy_init:
-        with st.spinner("Đang khởi tạo engine (MediaPipe + rembg)… lần đầu có thể mất 10–60 giây."):
+        with st.spinner(f"Đang khởi tạo engine ({_spin_engine})… lần đầu có thể mất 10–60 giây."):
             processor = _get_processor(ratio=ratio, blue_rgb=blue_rgb, min_face_conf=min_face_conf)
     else:
         processor = _get_processor(ratio=ratio, blue_rgb=blue_rgb, min_face_conf=min_face_conf)
@@ -458,7 +474,11 @@ def main() -> None:
 
         with st.spinner(f"Đang xử lý: {filename}"):
             try:
-                res = processor.process(pil, prefer_face_crop=prefer_face_crop)
+                res = processor.process(
+                    pil,
+                    prefer_face_crop=prefer_face_crop,
+                    replace_background=replace_blue_bg,
+                )
             except RuntimeError as e:
                 st.error(str(e))
                 continue
