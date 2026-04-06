@@ -99,23 +99,24 @@ def _background_uniformity_check(bgr: np.ndarray, border_pct: float = 0.08) -> T
     return False, f"Nền có thể không đơn sắc (độ lệch chuẩn màu ~{std:.1f})."
 
 
-def _enhance_luminance_y_channel(bgr: np.ndarray) -> np.ndarray:
+def _enhance_luminance_y_channel(bgr: np.ndarray, force_skip: bool = False) -> np.ndarray:
     """
-    Chỉnh sáng rất nhẹ: CLAHE clip thấp + tối đa ~15–18% trộn với Y gốc.
-    Ảnh tối vẫn dễ bị “cháy” nếu kéo histogram mạnh — ưu tiên giữ tông da.
+    Chỉnh sáng rất nhẹ: CLAHE clip thấp + tối đa ~17% trộn với Y gốc.
+    Ảnh đã sáng (studio, nền trắng) — force_skip để không làm tối/lệch tông.
     """
+    if force_skip:
+        return bgr
     _require_cv2()
     ycrcb = cv2.cvtColor(bgr, cv2.COLOR_BGR2YCrCb)
     y, cr, cb = cv2.split(ycrcb)
     mean_y = float(np.mean(y))
 
-    # Đủ sáng trung bình — không chỉnh
-    if mean_y >= 108:
+    # Crop đã sáng — không chỉnh
+    if mean_y >= 100:
         return bgr
 
     clahe = cv2.createCLAHE(clipLimit=1.12, tileGridSize=(8, 8))
     y_adj = clahe.apply(y)
-    # strength: phần lấy từ CLAHE, luôn nhỏ (ảnh rất tối vẫn ≤ ~0.18)
     strength = _clamp((98.0 - mean_y) / 95.0, 0.0, 1.0) * 0.17
     if strength < 0.008:
         return bgr
@@ -143,7 +144,7 @@ def _face_area_ratio_check(face_xyxy: Tuple[int, int, int, int], img_w: int, img
     x1, y1, x2, y2 = face_xyxy
     face_h = max(1, (y2 - y1))
     ratio = float(face_h / max(1, img_h))
-    if 0.50 <= ratio <= 0.70:
+    if 0.44 <= ratio <= 0.74:
         return True, f"Khuôn mặt chiếm ≈{ratio*100:.1f}% chiều cao ảnh (đạt).", ratio
     return False, f"Khuôn mặt chiếm ≈{ratio*100:.1f}% chiều cao ảnh (chưa đạt).", ratio
 
@@ -154,9 +155,10 @@ def _brightness_contrast_check(brightness: float, contrast: float) -> Tuple[bool
     if brightness < 80:
         ok = False
         warnings.append("Ảnh quá tối (độ sáng thấp).")
-    elif brightness > 190:
+    elif brightness > 225:
+        # Studio nền trắng thường ~170–210 — không gắn nhãn “cháy” quá sớm
         ok = False
-        warnings.append("Ảnh quá sáng / bị cháy (độ sáng cao).")
+        warnings.append("Ảnh rất sáng / có thể bị cháy vùng sáng (độ sáng rất cao).")
 
     if contrast < 25:
         ok = False
@@ -259,22 +261,31 @@ def _resize_to_standard(bgr: np.ndarray, ratio_name: str) -> np.ndarray:
     return cv2.resize(bgr, (out_w, out_h), interpolation=cv2.INTER_CUBIC)
 
 
-def _remove_bg_and_compose_blue(pil_rgb: Image.Image, blue_rgb: Tuple[int, int, int], session: Any) -> Image.Image:
-    """rembg → RGBA, ghép lên nền xanh cố định."""
+def _remove_bg_and_compose_blue(
+    pil_rgb: Image.Image,
+    blue_rgb: Tuple[int, int, int],
+    session: Any,
+    high_key_photo: bool = False,
+) -> Image.Image:
+    """rembg → RGBA, ghép lên nền xanh. Ảnh sáng/high-key: matting nhẹ hoặc tắt để tránh tối màu & mép cứng."""
     if remove is None:
         raise RuntimeError("Thiếu thư viện `rembg` trong môi trường hiện tại.")
     buf = io.BytesIO()
     pil_rgb.save(buf, format="PNG")
     inp = buf.getvalue()
 
-    out = remove(
-        inp,
-        session=session,
-        alpha_matting=True,
-        alpha_matting_foreground_threshold=230,
-        alpha_matting_background_threshold=10,
-        alpha_matting_erode_size=5,
-    )
+    if high_key_photo:
+        # Alpha matting mạnh dễ làm tối vùng da/tóc trên ảnh studio sáng
+        out = remove(inp, session=session, alpha_matting=False)
+    else:
+        out = remove(
+            inp,
+            session=session,
+            alpha_matting=True,
+            alpha_matting_foreground_threshold=235,
+            alpha_matting_background_threshold=10,
+            alpha_matting_erode_size=4,
+        )
     fg = Image.open(io.BytesIO(out)).convert("RGBA")
     bg = Image.new("RGBA", fg.size, blue_rgb + (255,))
     comp = Image.alpha_composite(bg, fg).convert("RGB")
@@ -422,17 +433,33 @@ def process_portrait_image(
     crop_rect = _compute_crop_rect(w0, h0, crop_face, aspect=aspect)
     cropped = _safe_crop_with_pad(bgr0, crop_rect)
 
-    cropped_eq = _enhance_luminance_y_channel(cropped)
+    br_crop, _ = _compute_brightness_contrast(cropped)
+    # Ảnh gốc hoặc crop đã sáng → không CLAHE (tránh lệch tông trước rembg)
+    skip_luma = brightness >= 118 or br_crop >= 102
+    cropped_eq = _enhance_luminance_y_channel(cropped, force_skip=skip_luma)
 
     out_bgr = _resize_to_standard(cropped_eq, ratio_name=ratio)
     out_pil = _bgr_to_pil(out_bgr).convert("RGB")
+
+    # Studio / nền trắng: rembg matting dễ tối màu → tắt matting, giữ màu gần gốc hơn
+    high_key = brightness >= 128 or br_crop >= 108
 
     try:
         if new_session is None or remove is None:
             raise RuntimeError("Thiếu rembg")
         session = _rembg_session if _rembg_session is not None else new_session("u2net")
-        out_pil = _remove_bg_and_compose_blue(out_pil, blue_rgb=blue_rgb, session=session)
-        checks["Thay nền xanh"] = CheckResult(True, "Đã thay nền xanh chuẩn.")
+        out_pil = _remove_bg_and_compose_blue(
+            out_pil,
+            blue_rgb=blue_rgb,
+            session=session,
+            high_key_photo=high_key,
+        )
+        msg_rembg = (
+            "Đã thay nền xanh (ảnh sáng: tách nền không matting để giữ màu)."
+            if high_key
+            else "Đã thay nền xanh chuẩn."
+        )
+        checks["Thay nền xanh"] = CheckResult(True, msg_rembg)
     except Exception:
         warnings.append("Không thể xóa nền tự động (rembg). Ảnh vẫn được crop/cân bằng sáng.")
         checks["Thay nền xanh"] = CheckResult(False, "Thiếu/lỗi rembg, bỏ qua thay nền.")
