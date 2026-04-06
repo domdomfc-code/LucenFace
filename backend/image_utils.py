@@ -66,6 +66,101 @@ def _clamp(v: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, v))
 
 
+def _box_area_xyxy(box: Tuple[int, int, int, int]) -> float:
+    return float(max(0, box[2] - box[0]) * max(0, box[3] - box[1]))
+
+
+def _intersection_area_xyxy(a: Tuple[int, int, int, int], b: Tuple[int, int, int, int]) -> float:
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+    ix1 = max(ax1, bx1)
+    iy1 = max(ay1, by1)
+    ix2 = min(ax2, bx2)
+    iy2 = min(ay2, by2)
+    iw = max(0, ix2 - ix1)
+    ih = max(0, iy2 - iy1)
+    return float(iw * ih)
+
+
+def _iou_xyxy(a: Tuple[int, int, int, int], b: Tuple[int, int, int, int]) -> float:
+    inter = _intersection_area_xyxy(a, b)
+    if inter <= 0.0:
+        return 0.0
+    aa = _box_area_xyxy(a)
+    bb = _box_area_xyxy(b)
+    union = aa + bb - inter
+    return float(inter / union) if union > 0 else 0.0
+
+
+def _fraction_of_a_inside_b(
+    inner: Tuple[int, int, int, int], outer: Tuple[int, int, int, int]
+) -> float:
+    """Tỷ lệ diện tích inner giao với outer / diện tích inner (≈1 → inner gần như nằm trong outer)."""
+    ia = _box_area_xyxy(inner)
+    if ia <= 0:
+        return 0.0
+    return _intersection_area_xyxy(inner, outer) / ia
+
+
+def _suppress_contained_duplicates(
+    faces: List[Tuple[int, int, int, int, float]],
+    contain_frac: float = 0.86,
+    area_ratio_max: float = 0.52,
+) -> List[Tuple[int, int, int, int, float]]:
+    """
+    Bỏ box nhỏ gần như nằm trọn trong box lớn hơn (MediaPipe đôi khi trả thêm bbox phụ trên tóc/mái).
+    """
+    if len(faces) <= 1:
+        return faces
+    faces = sorted(faces, key=lambda f: _box_area_xyxy(f[:4]), reverse=True)
+    kept: List[Tuple[int, int, int, int, float]] = []
+    for f in faces:
+        fx = f[:4]
+        fa = _box_area_xyxy(fx)
+        drop = False
+        for k in kept:
+            kx = k[:4]
+            ka = _box_area_xyxy(kx)
+            if ka <= fa * 1.02:
+                continue
+            if fa > ka * area_ratio_max:
+                continue
+            if _fraction_of_a_inside_b(fx, kx) >= contain_frac:
+                drop = True
+                break
+        if not drop:
+            kept.append(f)
+    return kept
+
+
+def _nms_face_boxes(
+    faces: List[Tuple[int, int, int, int, float]],
+    iou_threshold: float = 0.38,
+) -> List[Tuple[int, int, int, int, float]]:
+    """
+    Giữ một bbox cho mỗi khuôn mặt: loại trùng IoU cao (cùng người, nhiều detection).
+    """
+    if len(faces) <= 1:
+        return faces
+    faces = sorted(faces, key=lambda f: f[4], reverse=True)
+    kept: List[Tuple[int, int, int, int, float]] = []
+    for f in faces:
+        if any(_iou_xyxy(f[:4], k[:4]) >= iou_threshold for k in kept):
+            continue
+        kept.append(f)
+    return kept
+
+
+def _dedupe_face_detections(
+    faces: List[Tuple[int, int, int, int, float]],
+) -> List[Tuple[int, int, int, int, float]]:
+    """Chuỗi lọc: box lồng nhau → NMS IoU."""
+    if len(faces) <= 1:
+        return faces
+    faces = _suppress_contained_duplicates(faces)
+    return _nms_face_boxes(faces, iou_threshold=0.38)
+
+
 def _compute_brightness_contrast(bgr: np.ndarray) -> Tuple[float, float]:
     _require_cv2()
     gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
@@ -97,6 +192,26 @@ def _background_uniformity_check(bgr: np.ndarray, border_pct: float = 0.08) -> T
     if std < 18.0:
         return True, f"Nền tương đối đơn sắc (độ lệch chuẩn màu ~{std:.1f})."
     return False, f"Nền có thể không đơn sắc (độ lệch chuẩn màu ~{std:.1f})."
+
+
+def _boost_bgr_for_face_detection(bgr: np.ndarray) -> np.ndarray:
+    """
+    Tăng sáng / CLAHE vừa phải để phát hiện mặt (MediaPipe, Haar) trên ảnh thiếu sáng.
+    Giữ kích thước; bbox áp dụng lên ảnh gốc.
+    """
+    _require_cv2()
+    ycrcb = cv2.cvtColor(bgr, cv2.COLOR_BGR2YCrCb)
+    y, cr, cb = cv2.split(ycrcb)
+    mean_y = float(np.mean(y))
+    if mean_y >= 118:
+        return bgr
+    clahe = cv2.createCLAHE(clipLimit=2.2, tileGridSize=(8, 8))
+    y_adj = clahe.apply(y)
+    strength = _clamp((100.0 - mean_y) / 95.0, 0.18, 0.58)
+    y_mix = cv2.addWeighted(y, 1.0 - strength, y_adj, strength, 0).astype(np.float32)
+    y_out = np.clip(((y_mix / 255.0) ** 0.92) * 255.0, 0, 255).astype(np.uint8)
+    ycrcb_out = cv2.merge([y_out, cr, cb])
+    return cv2.cvtColor(ycrcb_out, cv2.COLOR_YCrCb2BGR)
 
 
 def _boost_bgr_for_segmentation(bgr: np.ndarray) -> np.ndarray:
@@ -149,10 +264,14 @@ def _mask_subject_ok(alpha: np.ndarray) -> Tuple[bool, str]:
     return True, ""
 
 
-def _enhance_luminance_y_channel(bgr: np.ndarray, force_skip: bool = False) -> np.ndarray:
+def _enhance_luminance_y_channel(
+    bgr: np.ndarray,
+    force_skip: bool = False,
+    *,
+    dark_boost: bool = False,
+) -> np.ndarray:
     """
-    Chỉnh sáng rất nhẹ: CLAHE clip thấp + tối đa ~17% trộn với Y gốc.
-    Ảnh đã sáng (studio, nền trắng) — force_skip để không làm tối/lệch tông.
+    Chỉnh sáng: CLAHE + trộn kênh Y. `dark_boost`: ảnh/crop thiếu sáng — trộn mạnh hơn trước rembg.
     """
     if force_skip:
         return bgr
@@ -165,9 +284,14 @@ def _enhance_luminance_y_channel(bgr: np.ndarray, force_skip: bool = False) -> n
     if mean_y >= 100:
         return bgr
 
-    clahe = cv2.createCLAHE(clipLimit=1.12, tileGridSize=(8, 8))
-    y_adj = clahe.apply(y)
-    strength = _clamp((98.0 - mean_y) / 95.0, 0.0, 1.0) * 0.17
+    if dark_boost:
+        clahe = cv2.createCLAHE(clipLimit=1.38, tileGridSize=(8, 8))
+        y_adj = clahe.apply(y)
+        strength = _clamp((102.0 - mean_y) / 90.0, 0.0, 1.0) * 0.36
+    else:
+        clahe = cv2.createCLAHE(clipLimit=1.12, tileGridSize=(8, 8))
+        y_adj = clahe.apply(y)
+        strength = _clamp((98.0 - mean_y) / 95.0, 0.0, 1.0) * 0.17
     if strength < 0.008:
         return bgr
     w_orig = 1.0 - strength
@@ -220,17 +344,21 @@ def _expand_face_bbox_for_portrait(
     face_xyxy: Tuple[int, int, int, int],
     img_w: int,
     img_h: int,
+    *,
+    pad_scale: float = 1.0,
 ) -> Tuple[int, int, int, int]:
     """
     Mở bbox mặt từ detector (thường bó sát) để crop gồm tóc mái, phần đầu và vai nhẹ.
+    `pad_scale` > 1 khi ảnh tối — bbox detector thường lệch/bó; cần thêm biên.
     Chỉ dùng cho bước crop; các check nghiệp vụ vẫn dùng bbox gốc.
     """
     x1, y1, x2, y2 = face_xyxy
     fw = max(1, x2 - x1)
     fh = max(1, y2 - y1)
-    pad_top = int(0.38 * fh)
-    pad_side = int(0.14 * fw)
-    pad_bottom = int(0.12 * fh)
+    ps = float(_clamp(pad_scale, 1.0, 1.28))
+    pad_top = int(0.38 * fh * ps)
+    pad_side = int(0.14 * fw * ps)
+    pad_bottom = int(0.12 * fh * ps)
     nx1 = x1 - pad_side
     ny1 = y1 - pad_top
     nx2 = x2 + pad_side
@@ -491,7 +619,14 @@ def process_portrait_image(
     bgr0 = _pil_to_bgr(pil_img)
     h0, w0 = bgr0.shape[:2]
 
-    faces = _detect_faces_with_detector(bgr0, min_confidence=min_face_conf, detector=_mp_face_detector)
+    brightness, contrast = _compute_brightness_contrast(bgr0)
+    use_det_boost = brightness < 106 or contrast < 33
+    bgr_for_faces = _boost_bgr_for_face_detection(bgr0) if use_det_boost else bgr0
+    faces = _detect_faces_with_detector(bgr_for_faces, min_confidence=min_face_conf, detector=_mp_face_detector)
+    if len(faces) == 0 and not use_det_boost:
+        faces = _detect_faces_with_detector(
+            _boost_bgr_for_face_detection(bgr0), min_confidence=min_face_conf, detector=_mp_face_detector
+        )
     if len(faces) == 0:
         errors.append("Không tìm thấy khuôn mặt.")
         checks["Khuôn mặt"] = CheckResult(False, "Không phát hiện được khuôn mặt.")
@@ -514,7 +649,6 @@ def process_portrait_image(
     if not ok_ratio:
         warnings.append(msg_ratio)
 
-    brightness, contrast = _compute_brightness_contrast(bgr0)
     ok_bc, bc_warns = _brightness_contrast_check(brightness, contrast)
     checks["Ánh sáng & Tương phản"] = CheckResult(
         ok_bc, f"Độ sáng ~{brightness:.0f}, tương phản ~{contrast:.0f}."
@@ -527,14 +661,24 @@ def process_portrait_image(
         warnings.append(msg_bg)
 
     should_face_crop = bool(prefer_face_crop) or (not ok_bg)
+    # Ảnh thiếu sáng: bbox mặt có thể nhỏ/lệch → thêm padding + headroom trên crop
+    pad_scale = 1.0 + (1.0 - min(brightness, 108.0) / 108.0) * 0.17
+    if brightness >= 108:
+        pad_scale = 1.0
+    headroom_crop = 0.28 if brightness >= 100 else 0.32
+
     if should_face_crop:
         checks["Khung ảnh"] = CheckResult(
             True,
             "Cắt theo khuôn mặt (bạn bật hoặc nền không đơn sắc).",
         )
         aspect = 3 / 4 if ratio == "3x4" else 2 / 3
-        crop_face = _expand_face_bbox_for_portrait((fx1, fy1, fx2, fy2), w0, h0)
-        crop_rect = _compute_crop_rect(w0, h0, crop_face, aspect=aspect)
+        crop_face = _expand_face_bbox_for_portrait(
+            (fx1, fy1, fx2, fy2), w0, h0, pad_scale=pad_scale
+        )
+        crop_rect = _compute_crop_rect(
+            w0, h0, crop_face, aspect=aspect, headroom_frac=headroom_crop
+        )
         cropped = _safe_crop_with_pad(bgr0, crop_rect)
     else:
         checks["Khung ảnh"] = CheckResult(
@@ -546,7 +690,11 @@ def process_portrait_image(
     br_crop, _ = _compute_brightness_contrast(cropped)
     # Ảnh gốc hoặc crop đã sáng → không CLAHE (tránh lệch tông trước rembg)
     skip_luma = brightness >= 118 or br_crop >= 102
-    cropped_eq = _enhance_luminance_y_channel(cropped, force_skip=skip_luma)
+    cropped_eq = _enhance_luminance_y_channel(
+        cropped,
+        force_skip=skip_luma,
+        dark_boost=(not skip_luma) and (brightness < 108 or br_crop < 88),
+    )
 
     if should_face_crop:
         out_bgr = _resize_to_standard(cropped_eq, ratio_name=ratio)
@@ -637,7 +785,7 @@ def _detect_faces_with_detector(
             faces.append((x1, y1, x2, y2, score))
 
         faces.sort(key=lambda f: f[4], reverse=True)
-        return faces
+        return _dedupe_face_detections(faces)
 
     # Fallback: OpenCV Haar Cascade (MediaPipe không khởi tạo được hoặc không cài)
     gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
@@ -652,4 +800,5 @@ def _detect_faces_with_detector(
         x2 = int(_clamp(x + ww, x1 + 1, w))
         y2 = int(_clamp(y + hh, y1 + 1, h))
         faces2.append((x1, y1, x2, y2, 0.50))  # heuristic score
-    return faces2
+    faces2.sort(key=lambda f: _box_area_xyxy(f[:4]), reverse=True)
+    return _dedupe_face_detections(faces2)
