@@ -202,18 +202,61 @@ def _filter_spurious_secondary_faces(
     return kept
 
 
-def _dedupe_face_detections(
+def _pick_primary_portrait_face(
     faces: List[Tuple[int, int, int, int, float]],
     img_w: int,
     img_h: int,
 ) -> List[Tuple[int, int, int, int, float]]:
-    """Chuỗi lọc: box lồng nhau → NMS IoU → bỏ bbox phụ kiểu ảnh thẻ."""
+    """
+    Chỉ giữ một mặt: selfie/chân dung thường 1 người; nền (poster, ảnh treo, kệ) tạo thêm bbox.
+    Chọn mặt lớn + gần trung tâm khung + điểm detector cao.
+    """
     if len(faces) <= 1:
         return faces
+    img_area = float(max(1, img_w * img_h))
+    icx = img_w / 2.0
+    icy = img_h / 2.0
+    best_f = faces[0]
+    best_c = -1.0
+    for f in faces:
+        x1, y1, x2, y2, sc = f
+        fa = _box_area_xyxy((x1, y1, x2, y2))
+        if fa <= 0:
+            continue
+        fcx = (x1 + x2) / 2.0
+        fcy = (y1 + y2) / 2.0
+        dx = (fcx - icx) / max(1.0, float(img_w))
+        dy = (fcy - icy) / max(1.0, float(img_h))
+        dist = math.hypot(dx, dy)
+        center = math.exp(-3.0 * dist * dist)
+        size_norm = math.sqrt(fa) / math.sqrt(max(0.008 * img_area, 1.0))
+        size_norm = min(2.8, max(0.35, size_norm))
+        combined = float(sc) * size_norm * center
+        if combined > best_c:
+            best_c = combined
+            best_f = f
+    return [best_f]
+
+
+def _dedupe_face_detections(
+    faces: List[Tuple[int, int, int, int, float]],
+    img_w: int,
+    img_h: int,
+) -> Tuple[List[Tuple[int, int, int, int, float]], int]:
+    """
+    Chuỗi lọc: box lồng nhau → NMS IoU → bỏ bbox phụ → chọn 1 mặt chủ thể.
+    Trả về (danh sách mặt, số mặt trước bước chọn chủ thể) để cảnh báo UI.
+    """
+    if len(faces) == 0:
+        return [], 0
+    if len(faces) == 1:
+        return faces, 1
     faces = _suppress_contained_duplicates(faces)
     faces = _nms_face_boxes(faces, iou_threshold=0.43)
     faces = _filter_spurious_secondary_faces(faces, img_w, img_h)
-    return faces
+    n_before = len(faces)
+    faces = _pick_primary_portrait_face(faces, img_w, img_h)
+    return faces, n_before
 
 
 def _compute_brightness_contrast(bgr: np.ndarray) -> Tuple[float, float]:
@@ -627,7 +670,8 @@ def _remove_bg_and_compose_blue(
 
 def detect_faces_mediapipe(bgr: np.ndarray, min_confidence: float = 0.6) -> List[Tuple[int, int, int, int, float]]:
     """Trả về danh sách khuôn mặt (x1,y1,x2,y2,score) theo pixel (không tái sử dụng detector — dùng PortraitProcessor khi batch)."""
-    return _detect_faces_with_detector(bgr, min_confidence=min_confidence, detector=None)
+    faces, _ = _detect_faces_with_detector(bgr, min_confidence=min_confidence, detector=None)
+    return faces
 
 
 def _get_mediapipe_face_detector(min_confidence: float = 0.6) -> Any:
@@ -834,7 +878,7 @@ def process_portrait_image(
 ) -> ProcessResult:
     """
     Pipeline backend:
-    - Phát hiện khuôn mặt (đúng 1 mặt)
+    - Phát hiện khuôn mặt; nhiều ứng viên (nền/poster) → chọn một mặt chủ thể
     - Validation: vị trí, tỷ lệ, sáng/tương phản, nền
     - Crop theo mặt chỉ khi: prefer_face_crop hoặc nền không đơn sắc; không thì scale toàn ảnh (cover).
     - Ảnh thiếu sáng: có thể tinh chỉnh bbox crop bằng MediaPipe Selfie Segmentation (tóc/vai).
@@ -858,22 +902,29 @@ def process_portrait_image(
     brightness, contrast = _compute_brightness_contrast(bgr0)
     use_det_boost = brightness < 106 or contrast < 33
     bgr_for_faces = _boost_bgr_for_face_detection(bgr0) if use_det_boost else bgr0
-    faces = _detect_faces_with_detector(bgr_for_faces, min_confidence=min_face_conf, detector=_mp_face_detector)
+    faces, n_face_candidates = _detect_faces_with_detector(
+        bgr_for_faces, min_confidence=min_face_conf, detector=_mp_face_detector
+    )
     if len(faces) == 0 and not use_det_boost:
-        faces = _detect_faces_with_detector(
+        faces, n_face_candidates = _detect_faces_with_detector(
             _boost_bgr_for_face_detection(bgr0), min_confidence=min_face_conf, detector=_mp_face_detector
         )
     if len(faces) == 0:
         errors.append("Không tìm thấy khuôn mặt.")
         checks["Khuôn mặt"] = CheckResult(False, "Không phát hiện được khuôn mặt.")
         return ProcessResult(status="FAILED", errors=errors, warnings=warnings, checks=checks, processed_image=None)
-    if len(faces) > 1:
-        errors.append("Có nhiều hơn 1 khuôn mặt trong ảnh.")
-        checks["Khuôn mặt"] = CheckResult(False, f"Phát hiện {len(faces)} khuôn mặt.")
-        return ProcessResult(status="FAILED", errors=errors, warnings=warnings, checks=checks, processed_image=None)
 
     fx1, fy1, fx2, fy2, _score = faces[0]
-    checks["Khuôn mặt"] = CheckResult(True, "Phát hiện đúng 1 khuôn mặt.")
+    if n_face_candidates > 1:
+        warnings.append(
+            "Phát hiện nhiều vùng giống mặt (nền, poster, ảnh nhỏ) — chỉ dùng mặt chính (lớn, gần giữa khung)."
+        )
+        checks["Khuôn mặt"] = CheckResult(
+            True,
+            f"Đã chọn 1 mặt chủ thể (lọc từ {n_face_candidates} vùng phát hiện).",
+        )
+    else:
+        checks["Khuôn mặt"] = CheckResult(True, "Phát hiện đúng 1 khuôn mặt.")
 
     ok_center, msg_center = _face_center_h_check((fx1, fy1, fx2, fy2), w0)
     checks["Vị trí (giữa khung)"] = CheckResult(ok_center, msg_center)
@@ -1003,9 +1054,10 @@ def _detect_faces_with_detector(
     bgr: np.ndarray,
     min_confidence: float,
     detector: Any | None,
-) -> List[Tuple[int, int, int, int, float]]:
+) -> Tuple[List[Tuple[int, int, int, int, float]], int]:
     """
     Nếu có detector (FaceDetection) thì dùng lại; nếu không thì tạo tạm (chậm hơn).
+    Trả về (danh sách mặt, số ứng viên trước khi chọn 1 mặt chủ thể).
     """
     _require_cv2()
     h, w = bgr.shape[:2]
@@ -1018,7 +1070,7 @@ def _detect_faces_with_detector(
 
         faces: List[Tuple[int, int, int, int, float]] = []
         if not getattr(res, "detections", None):
-            return faces
+            return [], 0
 
         for det in res.detections:
             score = float(det.score[0]) if det.score else 0.0
