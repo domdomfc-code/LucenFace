@@ -210,19 +210,26 @@ def _pick_primary_portrait_face(
     """
     Chỉ giữ một mặt: selfie/chân dung thường 1 người; nền (poster, ảnh treo, kệ) tạo thêm bbox.
     Chọn mặt lớn + gần trung tâm khung + điểm detector cao.
+    Bỏ bbox quá nhỏ (<~5.5% chiều cao) nếu còn ứng viên khác — tránh texture/tóc nhận nhầm là mặt.
     """
     if len(faces) <= 1:
         return faces
     img_area = float(max(1, img_w * img_h))
+    img_h_f = float(max(1, img_h))
+    min_h_frac = 0.055
+    eligible = [f for f in faces if (f[3] - f[1]) / img_h_f >= min_h_frac]
+    if not eligible:
+        eligible = faces
     icx = img_w / 2.0
     icy = img_h / 2.0
-    best_f = faces[0]
+    best_f = eligible[0]
     best_c = -1.0
-    for f in faces:
+    for f in eligible:
         x1, y1, x2, y2, sc = f
         fa = _box_area_xyxy((x1, y1, x2, y2))
         if fa <= 0:
             continue
+        fh = (y2 - y1) / img_h_f
         fcx = (x1 + x2) / 2.0
         fcy = (y1 + y2) / 2.0
         dx = (fcx - icx) / max(1.0, float(img_w))
@@ -232,6 +239,10 @@ def _pick_primary_portrait_face(
         size_norm = math.sqrt(fa) / math.sqrt(max(0.008 * img_area, 1.0))
         size_norm = min(2.8, max(0.35, size_norm))
         combined = float(sc) * size_norm * center
+        if fh < 0.10:
+            combined *= 0.42
+        elif fh < 0.14:
+            combined *= 0.78
         if combined > best_c:
             best_c = combined
             best_f = f
@@ -331,15 +342,46 @@ def _boost_bgr_for_segmentation(bgr: np.ndarray) -> np.ndarray:
     return cv2.cvtColor(ycrcb_out, cv2.COLOR_YCrCb2BGR)
 
 
-def _refine_alpha_u8(alpha: np.ndarray) -> np.ndarray:
+def _refine_alpha_u8(alpha: np.ndarray, *, strong: bool = False) -> np.ndarray:
     """Lấp lỗ nhỏ trên mặt nạ, mép mềm hơn — giảm hiện rách / lỗ trống trên ảnh tối."""
     _require_cv2()
     if alpha.ndim != 2:
         alpha = alpha.squeeze()
-    k5 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-    x = cv2.morphologyEx(alpha, cv2.MORPH_CLOSE, k5, iterations=1)
+    ksz = 7 if strong else 5
+    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ksz, ksz))
+    x = cv2.morphologyEx(alpha, cv2.MORPH_CLOSE, k, iterations=1)
     x = cv2.GaussianBlur(x, (3, 3), 0)
     return x
+
+
+def _decontaminate_straight_alpha_rgb(
+    r: np.ndarray,
+    g: np.ndarray,
+    b: np.ndarray,
+    a: np.ndarray,
+    bg_rgb: Tuple[int, int, int],
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    rembg trả RGBA straight alpha: mép thường nhiễm màu nền (xanh/viền halo).
+    Ước lượng màu foreground thật: Cf = (C - Cbg*(1-a)) / max(a, eps).
+    Chỉ áp vùng alpha > 12 để tránh nổ số.
+    """
+    br, bg_c, bb = float(bg_rgb[0]), float(bg_rgb[1]), float(bg_rgb[2])
+    rf = r.astype(np.float32)
+    gf = g.astype(np.float32)
+    bf_c = b.astype(np.float32)
+    af = np.maximum(a.astype(np.float32) / 255.0, 0.04)
+    r2 = (rf - br * (1.0 - af)) / af
+    g2 = (gf - bg_c * (1.0 - af)) / af
+    b2 = (bf_c - bb * (1.0 - af)) / af
+    r2 = np.clip(r2, 0, 255)
+    g2 = np.clip(g2, 0, 255)
+    b2 = np.clip(b2, 0, 255)
+    safe = a > 12
+    r_out = np.where(safe, r2, rf).astype(np.uint8)
+    g_out = np.where(safe, g2, gf).astype(np.uint8)
+    b_out = np.where(safe, b2, bf_c).astype(np.uint8)
+    return r_out, g_out, b_out
 
 
 def _mask_subject_ok(alpha: np.ndarray) -> Tuple[bool, str]:
@@ -607,7 +649,7 @@ def _merge_rembg_alpha_with_selfie(
     a_out = np.maximum(alpha_u8.astype(np.float32), boost * 0.91)
     a_out = np.clip(a_out, 0, 255).astype(np.uint8)
     a_out = cv2.GaussianBlur(a_out, (3, 3), 0)
-    return _refine_alpha_u8(a_out)
+    return _refine_alpha_u8(a_out, strong=True)
 
 
 def _remove_bg_and_compose_blue(
@@ -657,10 +699,17 @@ def _remove_bg_and_compose_blue(
     r_src, g_src, b_src = pil_rgb.convert("RGB").split()
     _, _, _, a_raw = fg.split()
     a_np = np.array(a_raw)
-    a_np = _refine_alpha_u8(a_np)
+    a_np = _refine_alpha_u8(a_np, strong=low_light)
     if low_light and selfie_for_alpha is not None:
         a_np = _merge_rembg_alpha_with_selfie(a_np, pil_rgb, selfie_for_alpha)
     mask_ok, _ = _mask_subject_ok(a_np)
+    r_arr = np.array(r_src)
+    g_arr = np.array(g_src)
+    b_arr = np.array(b_src)
+    r_arr, g_arr, b_arr = _decontaminate_straight_alpha_rgb(r_arr, g_arr, b_arr, a_np, blue_rgb)
+    r_src = Image.fromarray(r_arr, mode="L")
+    g_src = Image.fromarray(g_arr, mode="L")
+    b_src = Image.fromarray(b_arr, mode="L")
     a = Image.fromarray(a_np, mode="L")
     fg2 = Image.merge("RGBA", (r_src, g_src, b_src, a))
     bg = Image.new("RGBA", fg2.size, blue_rgb + (255,))
@@ -913,6 +962,27 @@ def process_portrait_image(
         errors.append("Không tìm thấy khuôn mặt.")
         checks["Khuôn mặt"] = CheckResult(False, "Không phát hiện được khuôn mặt.")
         return ProcessResult(status="FAILED", errors=errors, warnings=warnings, checks=checks, processed_image=None)
+
+    if len(faces) == 1:
+        sx1, sy1, sx2, sy2, _ = faces[0]
+        fh_rel = (sy2 - sy1) / float(max(1, h0))
+        if fh_rel < 0.092:
+            if use_det_boost:
+                fb, nc = _detect_faces_with_detector(
+                    bgr0, min_confidence=min_face_conf, detector=_mp_face_detector
+                )
+            else:
+                fb, nc = _detect_faces_with_detector(
+                    _boost_bgr_for_face_detection(bgr0),
+                    min_confidence=min_face_conf,
+                    detector=_mp_face_detector,
+                )
+            if len(fb) >= 1:
+                alt = fb[0]
+                fh_alt = (alt[3] - alt[1]) / float(max(1, h0))
+                if fh_alt > fh_rel + 0.015:
+                    faces = fb
+                    n_face_candidates = max(n_face_candidates, nc)
 
     fx1, fy1, fx2, fy2, _score = faces[0]
     if n_face_candidates > 1:
