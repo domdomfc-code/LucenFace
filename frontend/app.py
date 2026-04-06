@@ -19,7 +19,7 @@ from backend.image_utils import PortraitProcessor, ProcessResult, pil_to_jpeg_by
 
 APP_TITLE = "Chuẩn hóa ảnh chân dung học sinh"
 # Đổi số khi deploy để kiểm tra Streamlit Cloud đã build bản mới (sidebar hiển thị).
-APP_BUILD = "2.4-opencv-4.12"
+APP_BUILD = "2.5-snapedit-style"
 BLUE = "#005BC4"
 BG = "#F6F9FF"
 
@@ -28,26 +28,112 @@ def _inject_css() -> None:
     st.markdown(
         f"""
         <style>
-          .stApp {{
-            background: {BG};
+          :root {{
+            --blue: {BLUE};
+            --bg: {BG};
+            --card: #ffffff;
+            --text: #0f172a;
+            --muted: #64748b;
+            --border: rgba(2, 6, 23, 0.10);
+            --shadow: 0 10px 30px rgba(2, 6, 23, 0.06);
           }}
+
+          .stApp {{
+            background:
+              radial-gradient(1000px 500px at 20% 0%, rgba(0, 91, 196, 0.14), rgba(0,0,0,0) 60%),
+              radial-gradient(900px 500px at 90% 10%, rgba(56, 189, 248, 0.14), rgba(0,0,0,0) 60%),
+              var(--bg);
+          }}
+
+          section.main > div {{
+            padding-top: 1.25rem;
+          }}
+
+          header, footer {{
+            visibility: hidden;
+            height: 0px;
+          }}
+
+          .topbar {{
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            background: rgba(255,255,255,0.75);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 12px 14px;
+            box-shadow: var(--shadow);
+            backdrop-filter: blur(10px);
+          }}
+          .brand {{
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-weight: 900;
+            color: var(--text);
+            letter-spacing: -0.02em;
+          }}
+          .brand-badge {{
+            width: 34px;
+            height: 34px;
+            border-radius: 10px;
+            background: linear-gradient(135deg, var(--blue), #38bdf8);
+            box-shadow: 0 10px 22px rgba(0,91,196,0.20);
+          }}
+          .brand-title {{
+            font-size: 1.05rem;
+            line-height: 1.1;
+          }}
+          .brand-sub {{
+            font-size: 0.8rem;
+            color: var(--muted);
+            font-weight: 700;
+            margin-top: 1px;
+          }}
+          .top-actions {{
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            color: var(--muted);
+            font-weight: 700;
+          }}
+          .pill {{
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 7px 10px;
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            background: rgba(255,255,255,0.9);
+          }}
+
           .app-title {{
-            font-size: 1.65rem;
-            font-weight: 800;
-            color: {BLUE};
-            margin-bottom: 0.25rem;
+            font-size: 1.8rem;
+            font-weight: 900;
+            color: var(--text);
+            margin: 0.35rem 0 0.2rem 0;
+            letter-spacing: -0.03em;
           }}
           .app-subtitle {{
-            color: #2b2f38;
-            opacity: 0.75;
-            margin-bottom: 1rem;
+            color: var(--muted);
+            margin-bottom: 1.0rem;
+            font-weight: 600;
           }}
           .card {{
-            background: white;
-            border: 1px solid rgba(0,0,0,0.06);
-            border-radius: 14px;
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
             padding: 14px 14px 10px 14px;
-            box-shadow: 0 8px 24px rgba(0,0,0,0.05);
+            box-shadow: var(--shadow);
+          }}
+          .card-soft {{
+            background: rgba(255,255,255,0.85);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 14px;
+            box-shadow: var(--shadow);
+            backdrop-filter: blur(10px);
           }}
           .badge-ok {{
             display: inline-block;
@@ -91,7 +177,37 @@ def _inject_css() -> None:
             opacity: 0.95;
           }}
           .muted {{
-            color: #6b7280;
+            color: var(--muted);
+          }}
+
+          [data-testid="stFileUploader"] {{
+            background: transparent;
+            border: none;
+          }}
+          [data-testid="stFileUploader"] > div {{
+            border: 2px dashed rgba(0, 91, 196, 0.35);
+            background: rgba(255,255,255,0.80);
+            border-radius: 18px;
+            padding: 18px 16px;
+            box-shadow: var(--shadow);
+          }}
+          [data-testid="stFileUploader"] label {{
+            font-weight: 900;
+            color: var(--text);
+          }}
+          [data-testid="stFileUploader"] small {{
+            color: var(--muted);
+            font-weight: 600;
+          }}
+
+          .stButton > button {{
+            border-radius: 12px;
+            font-weight: 800;
+            border: 1px solid var(--border);
+          }}
+          .stDownloadButton > button {{
+            border-radius: 12px;
+            font-weight: 800;
           }}
         </style>
         """,
@@ -143,9 +259,28 @@ def main() -> None:
     st.set_page_config(page_title=APP_TITLE, page_icon="🪪", layout="wide")
     _inject_css()
 
+    st.markdown(
+        f"""
+        <div class="topbar">
+          <div class="brand">
+            <div class="brand-badge"></div>
+            <div>
+              <div class="brand-title">LucenFace</div>
+              <div class="brand-sub">Portrait Standardizer • Build {APP_BUILD}</div>
+            </div>
+          </div>
+          <div class="top-actions">
+            <span class="pill">Batch ≤ 50 ảnh</span>
+            <span class="pill">Nền xanh</span>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
     st.markdown(f'<div class="app-title">{APP_TITLE}</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="app-subtitle">Upload ảnh → kiểm tra tiêu chuẩn → auto-crop/cân bằng sáng → thay nền xanh → tải về ZIP.</div>',
+        '<div class="app-subtitle">Kéo & thả ảnh vào vùng bên dưới để tự động chuẩn hóa (crop, cân bằng sáng, thay nền xanh, tải ZIP).</div>',
         unsafe_allow_html=True,
     )
 
@@ -191,9 +326,13 @@ def main() -> None:
 
     blue_rgb = tuple(int(blue_hex.lstrip("#")[i : i + 2], 16) for i in (0, 2, 4))
 
-    st.markdown("### Upload ảnh")
+    st.markdown("### Kéo & thả ảnh")
+    st.markdown(
+        '<div class="card-soft muted">Mẹo: ảnh rõ mặt, thẳng góc; hệ thống sẽ tự phát hiện 1 khuôn mặt để crop đúng chuẩn.</div>',
+        unsafe_allow_html=True,
+    )
     uploads = st.file_uploader(
-        "Kéo-thả hoặc bấm để chọn (JPG/PNG, tối đa 50 ảnh).",
+        "Kéo và thả tệp vào đây hoặc bấm để chọn",
         type=["jpg", "jpeg", "png"],
         accept_multiple_files=True,
     )
