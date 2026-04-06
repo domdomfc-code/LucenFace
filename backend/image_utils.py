@@ -147,13 +147,39 @@ def _brightness_contrast_check(brightness: float, contrast: float) -> Tuple[bool
     return ok, warnings
 
 
+def _expand_face_bbox_for_portrait(
+    face_xyxy: Tuple[int, int, int, int],
+    img_w: int,
+    img_h: int,
+) -> Tuple[int, int, int, int]:
+    """
+    Mở bbox mặt từ detector (thường bó sát) để crop gồm tóc mái, phần đầu và vai nhẹ.
+    Chỉ dùng cho bước crop; các check nghiệp vụ vẫn dùng bbox gốc.
+    """
+    x1, y1, x2, y2 = face_xyxy
+    fw = max(1, x2 - x1)
+    fh = max(1, y2 - y1)
+    pad_top = int(0.38 * fh)
+    pad_side = int(0.14 * fw)
+    pad_bottom = int(0.12 * fh)
+    nx1 = x1 - pad_side
+    ny1 = y1 - pad_top
+    nx2 = x2 + pad_side
+    ny2 = y2 + pad_bottom
+    nx1 = int(_clamp(nx1, 0, img_w - 1))
+    ny1 = int(_clamp(ny1, 0, img_h - 1))
+    nx2 = int(_clamp(nx2, nx1 + 1, img_w))
+    ny2 = int(_clamp(ny2, ny1 + 1, img_h))
+    return nx1, ny1, nx2, ny2
+
+
 def _compute_crop_rect(
     img_w: int,
     img_h: int,
     face_xyxy: Tuple[int, int, int, int],
     aspect: float,
-    target_face_height_frac: float = 0.58,
-    headroom_frac: float = 0.18,
+    target_face_height_frac: float = 0.50,
+    headroom_frac: float = 0.28,
 ) -> Tuple[int, int, int, int]:
     """
     Compute crop rectangle (x1,y1,x2,y2) with desired aspect ratio,
@@ -228,9 +254,9 @@ def _remove_bg_and_compose_blue(pil_rgb: Image.Image, blue_rgb: Tuple[int, int, 
         inp,
         session=session,
         alpha_matting=True,
-        alpha_matting_foreground_threshold=240,
+        alpha_matting_foreground_threshold=230,
         alpha_matting_background_threshold=10,
-        alpha_matting_erode_size=12,
+        alpha_matting_erode_size=5,
     )
     fg = Image.open(io.BytesIO(out)).convert("RGBA")
     bg = Image.new("RGBA", fg.size, blue_rgb + (255,))
@@ -375,7 +401,8 @@ def process_portrait_image(
         warnings.append(msg_bg)
 
     aspect = 3 / 4 if ratio == "3x4" else 2 / 3
-    crop_rect = _compute_crop_rect(w0, h0, (fx1, fy1, fx2, fy2), aspect=aspect)
+    crop_face = _expand_face_bbox_for_portrait((fx1, fy1, fx2, fy2), w0, h0)
+    crop_rect = _compute_crop_rect(w0, h0, crop_face, aspect=aspect)
     cropped = _safe_crop_with_pad(bgr0, crop_rect)
 
     cropped_eq = _equalize_hist_y_channel(cropped)

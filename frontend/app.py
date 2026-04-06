@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 import streamlit as st
+import streamlit.components.v1 as components
 from PIL import Image
 
 # Đảm bảo import được package `backend` khi chạy: streamlit run frontend/app.py
@@ -19,7 +20,7 @@ from backend.image_utils import PortraitProcessor, ProcessResult, pil_to_jpeg_by
 
 APP_TITLE = "Chuẩn hóa ảnh chân dung học sinh"
 # Đổi số khi deploy để kiểm tra Streamlit Cloud đã build bản mới (sidebar hiển thị).
-APP_BUILD = "2.7-mp-fallback-haar"
+APP_BUILD = "2.8-crop-hair-sidebar-fab"
 BLUE = "#005BC4"
 BG = "#F6F9FF"
 
@@ -49,7 +50,16 @@ def _inject_css() -> None:
             padding-top: 1.25rem;
           }}
 
-          header, footer {{
+          /* Không ẩn cả header — Streamlit cần vùng này để mở lại sidebar khi thu gọn */
+          header[data-testid="stHeader"] {{
+            background: rgba(255, 255, 255, 0.55) !important;
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid var(--border);
+          }}
+          .stDeployButton {{
+            display: none !important;
+          }}
+          footer {{
             visibility: hidden;
             height: 0px;
           }}
@@ -215,6 +225,33 @@ def _inject_css() -> None:
     )
 
 
+def _sidebar_reopen_button() -> None:
+    """Nút cố định góc trái: mở lại sidebar khi đã thu nhỏ (backup nếu khó tìm nút mặc định)."""
+    components.html(
+        """
+        <div style="position:fixed;top:52px;left:8px;z-index:999999;">
+        <button type="button" title="Mở cài đặt (sidebar)"
+          onclick="(() => {
+            try {
+              const d = window.parent.document;
+              const q = (s) => d.querySelector(s);
+              (q('[data-testid="collapsedControl"]')
+                || q('[data-testid="stSidebarCollapsedControl"]')
+                || q('button[data-testid="baseButton-header"]')
+                || q('header button[kind="header"]'))?.click();
+            } catch (e) {}
+          })()"
+          style="font-size:1.05rem;line-height:1;padding:0.45rem 0.55rem;border-radius:10px;
+                 border:1px solid rgba(15,23,42,0.12);background:rgba(255,255,255,0.96);
+                 cursor:pointer;box-shadow:0 4px 14px rgba(15,23,42,0.12);color:#0f172a;">
+          ☰
+        </button>
+        </div>
+        """,
+        height=52,
+    )
+
+
 def _checklist_html(checks: Dict[str, Dict[str, str]]) -> str:
     parts = ['<div class="checklist">']
     for name, payload in checks.items():
@@ -258,6 +295,7 @@ def _get_processor(ratio: str, blue_rgb: Tuple[int, int, int], min_face_conf: fl
 def main() -> None:
     st.set_page_config(page_title=APP_TITLE, page_icon="🪪", layout="wide")
     _inject_css()
+    _sidebar_reopen_button()
 
     st.markdown(
         f"""
