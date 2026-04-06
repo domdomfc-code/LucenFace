@@ -550,6 +550,128 @@ def _try_get_mediapipe_face_detector(min_confidence: float = 0.6) -> Any | None:
         return None
 
 
+def _try_get_selfie_segmentation() -> Any | None:
+    """Segmentation người/nền (MediaPipe) — dùng tinh chỉnh crop tóc/vai khi thiếu sáng."""
+    if mp is None:
+        return None
+    try:
+        mp_seg = mp.solutions.selfie_segmentation  # type: ignore[attr-defined]
+    except Exception:
+        try:
+            from mediapipe.python.solutions import selfie_segmentation as mp_seg  # type: ignore
+        except Exception:
+            return None
+    try:
+        return mp_seg.SelfieSegmentation(model_selection=1)
+    except Exception:
+        return None
+
+
+def _refine_expanded_face_bbox_with_selfie(
+    bgr: np.ndarray,
+    face_xyxy: Tuple[int, int, int, int],
+    expanded_xyxy: Tuple[int, int, int, int],
+    selfie: Any,
+) -> Tuple[int, int, int, int]:
+    """
+    Mở bbox đã pad theo mặt bằng mặt nạ người (tóc phía trên, vai/trang phục phía dưới).
+    Chạy trên ảnh đã boost sáng để ổn định khi thiếu sáng.
+    """
+    _require_cv2()
+    h, w = bgr.shape[:2]
+    fx1, fy1, fx2, fy2 = face_xyxy
+    ex1, ey1, ex2, ey2 = expanded_xyxy
+    fw = max(1, fx2 - fx1)
+    fh = max(1, fy2 - fy1)
+    fcx = int((fx1 + fx2) / 2)
+    fcy = int((fy1 + fy2) / 2)
+
+    bgr_boost = _boost_bgr_for_face_detection(bgr)
+    rgb = cv2.cvtColor(bgr_boost, cv2.COLOR_BGR2RGB)
+    try:
+        res = selfie.process(rgb)
+    except Exception:
+        return expanded_xyxy
+    if res is None or getattr(res, "segmentation_mask", None) is None:
+        return expanded_xyxy
+
+    m = np.asarray(res.segmentation_mask, dtype=np.float32)
+    if m.ndim != 2:
+        return expanded_xyxy
+    mh, mw = m.shape[:2]
+    if mh != h or mw != w:
+        m = cv2.resize(m, (w, h), interpolation=cv2.INTER_LINEAR)
+
+    # Ngưỡng thấp hơn một chút khi ảnh tối — vẫn lọc nhiễu bằng morphology
+    binm = (m > 0.38).astype(np.uint8) * 255
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    binm = cv2.morphologyEx(binm, cv2.MORPH_CLOSE, kernel, iterations=1)
+    binm = cv2.dilate(binm, kernel, iterations=1)
+
+    # Cửa sổ chân dung quanh mặt (không lấy cả chân)
+    win_y1 = max(0, fy1 - int(1.2 * fh))
+    win_y2 = min(h, fy2 + int(2.45 * fh))
+    win_x1 = max(0, fcx - int(1.55 * fw))
+    win_x2 = min(w, fcx + int(1.55 * fw))
+    win_mask = np.zeros((h, w), dtype=np.uint8)
+    win_mask[win_y1:win_y2, win_x1:win_x2] = 255
+    masked = cv2.bitwise_and(binm, win_mask)
+
+    num, labels, stats, _ = cv2.connectedComponentsWithStats((masked > 127).astype(np.uint8), connectivity=8)
+    if num <= 1:
+        return expanded_xyxy
+
+    fcx = int(_clamp(float(fcx), 0.0, float(w - 1)))
+    fcy = int(_clamp(float(fcy), 0.0, float(h - 1)))
+    lbl = int(labels[fcy, fcx])
+    if lbl == 0:
+        # Điểm giữa mặt đôi khi rơi nền — thử lệch nhẹ trong bbox mặt
+        found = False
+        for dy in (0, int(-0.12 * fh), int(0.08 * fh)):
+            for dx in (0, int(-0.1 * fw), int(0.1 * fw)):
+                cy = int(_clamp(float(fcy + dy), 0.0, float(h - 1)))
+                cx = int(_clamp(float(fcx + dx), 0.0, float(w - 1)))
+                t = int(labels[cy, cx])
+                if t != 0:
+                    lbl = t
+                    found = True
+                    break
+            if found:
+                break
+    if lbl == 0:
+        return expanded_xyxy
+
+    x_, y_, cw_, ch_, area = stats[lbl]
+    if area < max(200, int(0.012 * w * h)):
+        return expanded_xyxy
+
+    px1, py1, px2, py2 = int(x_), int(y_), int(x_ + cw_), int(y_ + ch_)
+
+    new_x1 = min(ex1, px1)
+    new_y1 = min(ey1, py1)
+    new_x2 = max(ex2, px2)
+    new_y2 = max(ey2, py2)
+
+    # Giới hạn mở ngang (tránh kéo full khung khi nền lẫn)
+    max_span = int(2.7 * fw)
+    if new_x2 - new_x1 > max_span:
+        cx = (fx1 + fx2) // 2
+        new_x1 = max(0, cx - max_span // 2)
+        new_x2 = min(w, cx + max_span // 2)
+
+    # Giới hạn dưới: không kéo quá xa so với đáy mặt (tránh lấy hết thân)
+    bottom_cap = min(h, fy2 + int(2.65 * fh))
+    if new_y2 > bottom_cap:
+        new_y2 = bottom_cap
+
+    new_x1 = int(_clamp(new_x1, 0, w - 1))
+    new_y1 = int(_clamp(new_y1, 0, h - 1))
+    new_x2 = int(_clamp(new_x2, new_x1 + 1, w))
+    new_y2 = int(_clamp(new_y2, new_y1 + 1, h))
+
+    return (new_x1, new_y1, new_x2, new_y2)
+
+
 class PortraitProcessor:
     """
     Bộ xử lý ảnh chân dung có cache tài nguyên nặng (MediaPipe detector, rembg session).
@@ -569,6 +691,7 @@ class PortraitProcessor:
         self.min_face_conf = float(min_face_conf)
         _require_cv2()
         self._fd = _try_get_mediapipe_face_detector(min_confidence=self.min_face_conf)
+        self._selfie = _try_get_selfie_segmentation()
         self._rembg_session = None
         if new_session is not None:
             try:
@@ -585,6 +708,7 @@ class PortraitProcessor:
             prefer_face_crop=prefer_face_crop,
             _mp_face_detector=self._fd,
             _rembg_session=self._rembg_session,
+            _selfie_segmentation=self._selfie,
         )
 
 
@@ -596,12 +720,14 @@ def process_portrait_image(
     prefer_face_crop: bool = False,
     _mp_face_detector: Any | None = None,
     _rembg_session: Any | None = None,
+    _selfie_segmentation: Any | None = None,
 ) -> ProcessResult:
     """
     Pipeline backend:
     - Phát hiện khuôn mặt (đúng 1 mặt)
     - Validation: vị trí, tỷ lệ, sáng/tương phản, nền
     - Crop theo mặt chỉ khi: prefer_face_crop hoặc nền không đơn sắc; không thì scale toàn ảnh (cover).
+    - Ảnh thiếu sáng: có thể tinh chỉnh bbox crop bằng MediaPipe Selfie Segmentation (tóc/vai).
     - Chỉnh sáng nhẹ (CLAHE + trộn Y) khi cần
     - Thay nền: rembg + nền xanh
     """
@@ -676,6 +802,15 @@ def process_portrait_image(
         crop_face = _expand_face_bbox_for_portrait(
             (fx1, fy1, fx2, fy2), w0, h0, pad_scale=pad_scale
         )
+        if _selfie_segmentation is not None and (
+            brightness < 114 or contrast < 36 or not ok_bc
+        ):
+            crop_face = _refine_expanded_face_bbox_with_selfie(
+                bgr0,
+                (fx1, fy1, fx2, fy2),
+                crop_face,
+                _selfie_segmentation,
+            )
         crop_rect = _compute_crop_rect(
             w0, h0, crop_face, aspect=aspect, headroom_frac=headroom_crop
         )
