@@ -40,7 +40,7 @@ def _cv2_troubleshoot_markdown() -> str:
 
 APP_TITLE = "Chuẩn hóa ảnh chân dung học sinh"
 # Đổi số khi deploy để kiểm tra Streamlit Cloud đã build bản mới (sidebar hiển thị).
-APP_BUILD = "3.5.0-toggle-blue-bg"
+APP_BUILD = "3.5.1-processor-cache-bust"
 BLUE = "#005BC4"
 BG = "#F6F9FF"
 
@@ -310,9 +310,37 @@ def _make_zip(files: List[Tuple[str, bytes]]) -> bytes:
 
 
 @st.cache_resource(show_spinner=False)
-def _get_processor(ratio: str, blue_rgb: Tuple[int, int, int], min_face_conf: float) -> PortraitProcessor:
-    # Cache tài nguyên nặng: MediaPipe detector + rembg session
+def _get_processor(
+    ratio: str,
+    blue_rgb: Tuple[int, int, int],
+    min_face_conf: float,
+    *,
+    cache_version: str = APP_BUILD,
+) -> PortraitProcessor:
+    """
+    `cache_version` đổi khi deploy (APP_BUILD) để tránh giữ PortraitProcessor cũ
+    không khớp chữ ký `process(..., replace_background=...)` → TypeError trên Cloud.
+    """
+    _ = cache_version  # phân vùng cache theo APP_BUILD
     return PortraitProcessor(ratio=ratio, blue_rgb=blue_rgb, min_face_conf=min_face_conf)
+
+
+def _run_processor(
+    processor: PortraitProcessor,
+    pil: Image.Image,
+    *,
+    prefer_face_crop: bool,
+    replace_blue_bg: bool,
+) -> ProcessResult:
+    """Gọi `process`; fallback nếu instance/cache cũ không có tham số `replace_background`."""
+    try:
+        return processor.process(
+            pil,
+            prefer_face_crop=prefer_face_crop,
+            replace_background=replace_blue_bg,
+        )
+    except TypeError:
+        return processor.process(pil, prefer_face_crop=prefer_face_crop)
 
 
 def main() -> None:
@@ -453,9 +481,19 @@ def main() -> None:
     _spin_engine = "MediaPipe + rembg" if replace_blue_bg else "MediaPipe"
     if lazy_init:
         with st.spinner(f"Đang khởi tạo engine ({_spin_engine})… lần đầu có thể mất 10–60 giây."):
-            processor = _get_processor(ratio=ratio, blue_rgb=blue_rgb, min_face_conf=min_face_conf)
+            processor = _get_processor(
+                ratio=ratio,
+                blue_rgb=blue_rgb,
+                min_face_conf=min_face_conf,
+                cache_version=APP_BUILD,
+            )
     else:
-        processor = _get_processor(ratio=ratio, blue_rgb=blue_rgb, min_face_conf=min_face_conf)
+        processor = _get_processor(
+            ratio=ratio,
+            blue_rgb=blue_rgb,
+            min_face_conf=min_face_conf,
+            cache_version=APP_BUILD,
+        )
 
     progress = st.progress(0)
     processed_zip_items: List[Tuple[str, bytes]] = []
@@ -474,10 +512,11 @@ def main() -> None:
 
         with st.spinner(f"Đang xử lý: {filename}"):
             try:
-                res = processor.process(
+                res = _run_processor(
+                    processor,
                     pil,
                     prefer_face_crop=prefer_face_crop,
-                    replace_background=replace_blue_bg,
+                    replace_blue_bg=replace_blue_bg,
                 )
             except RuntimeError as e:
                 st.error(str(e))
