@@ -1120,7 +1120,8 @@ def process_portrait_image(
     - Khi `replace_background` và `skip_rembg_if_uniform_background`: nếu viền khung đầu ra gần một màu
       (tiêu chuẩn phông), bỏ qua rembg và giữ nền gốc.
     - `_rembg_engine`: `"local"` (rembg + ONNX), `"remove_bg_api"` (API remove.bg), `"none"` (không tải model).
-    - EXIF Orientation được áp dụng trước; nếu vẫn không thấy mặt, thử xoay 90°/180°/270° và lật ngang/dọc.
+    - EXIF Orientation được áp dụng trước; nếu vẫn không thấy mặt, thử xoay 90°/180°/270°.
+      Nếu chỉ khi lật ngang/dọc mới thấy mặt → ảnh không hợp lệ, từ chối (yêu cầu upload ảnh khác).
     """
     errors: List[str] = []
     warnings: List[str] = []
@@ -1146,8 +1147,6 @@ def process_portrait_image(
             ("xoay 90° theo chiều kim đồng hồ", lambda b: cv2.rotate(b, cv2.ROTATE_90_CLOCKWISE)),
             ("xoay 180°", lambda b: cv2.rotate(b, cv2.ROTATE_180)),
             ("xoay 90° ngược chiều kim đồng hồ", lambda b: cv2.rotate(b, cv2.ROTATE_90_COUNTERCLOCKWISE)),
-            ("lật ngang (ảnh gương)", lambda b: cv2.flip(b, 1)),
-            ("lật dọc", lambda b: cv2.flip(b, 0)),
         ):
             b_try = op(bgr0)
             f_try, nc_try = _detect_faces_bgr_with_boost(b_try, min_face_conf, _mp_face_detector)
@@ -1157,15 +1156,42 @@ def process_portrait_image(
                 faces, n_face_candidates = f_try, nc_try
                 orient_msg = f"Đã tự chỉnh hướng: {label}."
                 warnings.append(
-                    f"Ảnh có vẻ bị xoay hoặc lật — đã tự điều chỉnh ({label}) để nhận diện khuôn mặt."
+                    f"Ảnh có vẻ bị xoay — đã tự điều chỉnh ({label}) để nhận diện khuôn mặt."
                 )
                 break
+
+    if len(faces) == 0:
+        b_h = cv2.flip(bgr0, 1)
+        b_v = cv2.flip(bgr0, 0)
+        fh, _ = _detect_faces_bgr_with_boost(b_h, min_face_conf, _mp_face_detector)
+        fv, _ = _detect_faces_bgr_with_boost(b_v, min_face_conf, _mp_face_detector)
+        if len(fh) > 0 or len(fv) > 0:
+            if len(fh) > 0 and len(fv) > 0:
+                kind = "lật ngang và/hoặc lật dọc"
+            elif len(fh) > 0:
+                kind = "lật ngang (ảnh gương)"
+            else:
+                kind = "lật dọc (ngược chiều dọc)"
+            errors.append(
+                "Ảnh không hợp lệ: có dấu hiệu "
+                + kind
+                + ". Vui lòng tải lên ảnh khác, đúng hướng chụp (không gương, không lật)."
+            )
+            checks["Định hướng ảnh"] = CheckResult(
+                False,
+                "Ảnh bị lật ngang hoặc lật ngược — không chấp nhận. Hãy upload ảnh khác.",
+            )
+            checks["Khuôn mặt"] = CheckResult(
+                False,
+                "Chỉ phát hiện được mặt khi lật ảnh; cần file gốc đúng hướng.",
+            )
+            return ProcessResult(status="FAILED", errors=errors, warnings=warnings, checks=checks, processed_image=None)
 
     if len(faces) == 0:
         errors.append("Không tìm thấy khuôn mặt.")
         checks["Định hướng ảnh"] = CheckResult(
             False,
-            "Đã áp dụng EXIF và thử xoay/lật; vẫn không phát hiện mặt — hãy xoay ảnh hoặc chụp lại.",
+            "Đã áp dụng EXIF và thử xoay 90°/180°/270°; vẫn không phát hiện mặt — hãy xoay ảnh hoặc chụp lại.",
         )
         checks["Khuôn mặt"] = CheckResult(False, "Không phát hiện được khuôn mặt.")
         return ProcessResult(status="FAILED", errors=errors, warnings=warnings, checks=checks, processed_image=None)
