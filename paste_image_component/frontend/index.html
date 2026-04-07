@@ -30,7 +30,12 @@
         function post(msg) {
           window.parent.postMessage(msg, "*");
         }
-        post({ isStreamlitMessage: true, type: "streamlit:componentReady" });
+        /* Streamlit ≥1.43: bắt buộc apiVersion 1 cho declare_component (v1 iframe). */
+        post({
+          isStreamlitMessage: true,
+          type: "streamlit:componentReady",
+          apiVersion: 1,
+        });
         post({ isStreamlitMessage: true, type: "streamlit:setFrameHeight", height: 76 });
 
         el.addEventListener("focus", function () {
