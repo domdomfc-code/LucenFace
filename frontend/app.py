@@ -108,7 +108,7 @@ def _cv2_troubleshoot_markdown() -> str:
 
 APP_TITLE = "Chuẩn hóa ảnh chân dung học sinh"
 # Đổi số khi deploy để kiểm tra Streamlit Cloud đã build bản mới (sidebar hiển thị).
-APP_BUILD = "3.8.2-paste-capture-resize-clipboard-api"
+APP_BUILD = "3.8.3-paste-ctrlv-anywhere"
 BLUE = "#005BC4"
 BG = "#F6F9FF"
 
@@ -561,7 +561,7 @@ def main() -> None:
     st.markdown("### Kéo & thả ảnh / Dán từ clipboard")
     st.markdown(
         '<div class="card-soft muted">Mẹo: ảnh rõ mặt, thẳng góc. Bật/tắt ghép nền xanh trong sidebar trước khi xử lý. Cắt theo mặt khi bạn bật hoặc nền không đơn sắc. '
-        "Có thể <strong>dán ảnh</strong>: copy ảnh (hoặc chụp màn hình), nhấp vào khung dán bên dưới, rồi Ctrl+V.</div>",
+        "Có thể <strong>dán ảnh</strong>: copy ảnh hoặc chụp màn hình, rồi <strong>Ctrl+V / ⌘+V</strong> bất kỳ đâu trên trang (trừ khi đang gõ trong ô chữ).</div>",
         unsafe_allow_html=True,
     )
     uploads = st.file_uploader(
@@ -570,9 +570,8 @@ def main() -> None:
         accept_multiple_files=True,
     )
     st.caption(
-        "**Dán ảnh:** (1) Nhấp vào **khung xám** (hoặc Tab tới đó), rồi **Ctrl+V** / **⌘+V**. "
-        "(2) Hoặc bấm nút **đọc clipboard** trong khung — trình duyệt sẽ hỏi quyền. "
-        "Ảnh được nén nhẹ trước khi gửi; nếu vẫn lỗi hãy dùng upload file."
+        "**Dán ảnh:** **Ctrl+V** / **⌘+V** ở bất kỳ đâu trên trang (không cần nhấp ô) — không áp dụng khi focus đang ở ô nhập chữ/sidebar text. "
+        "Hoặc bấm **đọc clipboard** trong khung component. Ảnh được nén trước khi gửi."
     )
     pasted_data_url = paste_image_from_clipboard(key="p2c_clipboard_paste")
 

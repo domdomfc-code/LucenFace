@@ -8,26 +8,20 @@
   <body style="margin: 0">
     <div id="wrap" style="display: flex; flex-direction: column; gap: 8px">
       <div
-        id="paste-zone"
-        tabindex="0"
-        contenteditable="true"
-        spellcheck="false"
+        id="hint"
         style="
           font-family: system-ui, -apple-system, sans-serif;
           font-size: 14px;
           padding: 10px 12px;
           border: 1px dashed #64748b;
           border-radius: 8px;
-          outline: none;
-          cursor: text;
           background: #f8fafc;
           color: #334155;
           line-height: 1.45;
-          min-height: 44px;
-          caret-color: #005bc4;
         "
       >
-        Nhấp vào đây (hoặc Tab), rồi <strong>Ctrl+V</strong> / <strong>⌘+V</strong> để dán ảnh
+        <strong>Ctrl+V</strong> / <strong>⌘+V</strong> <strong>bất kỳ đâu</strong> trên trang để dán ảnh — không cần nhấp ô nào.
+        Không chặn khi bạn đang gõ trong ô chữ (sidebar / text input).
       </div>
       <button
         type="button"
@@ -48,7 +42,6 @@
     </div>
     <script>
       (function () {
-        var el = document.getElementById("paste-zone");
         var readBtn = document.getElementById("read-btn");
         var MAX_SIDE = 2048;
         var JPEG_Q = 0.88;
@@ -66,7 +59,7 @@
         function setFrameH(h) {
           post({ isStreamlitMessage: true, type: "streamlit:setFrameHeight", height: h });
         }
-        setFrameH(118);
+        setFrameH(108);
 
         function sendToStreamlit(dataUrl) {
           if (!dataUrl || typeof dataUrl !== "string" || dataUrl.indexOf("data:image") !== 0) return;
@@ -109,9 +102,44 @@
           img.src = dataUrl;
         }
 
-        function handlePasteEvent(e) {
+        function shouldIgnorePasteTarget(t) {
+          if (!t || typeof t.closest !== "function") return false;
+          if (t.closest("[data-testid='stChatInput']")) return true;
+          if (t.closest("[data-testid='stTextInput']")) return true;
+          if (t.closest("[data-testid='stTextArea']")) return true;
+          if (t.closest("[data-testid='stCode']")) return true;
+          var el = t.nodeType === 3 ? t.parentElement : t;
+          while (el && el.nodeType === 1) {
+            var tag = el.tagName;
+            if (tag === "TEXTAREA") return true;
+            if (tag === "INPUT") {
+              var typ = (el.getAttribute("type") || "text").toLowerCase();
+              if (
+                typ === "checkbox" ||
+                typ === "radio" ||
+                typ === "button" ||
+                typ === "submit" ||
+                typ === "reset" ||
+                typ === "file" ||
+                typ === "range" ||
+                typ === "color" ||
+                typ === "hidden"
+              ) {
+                el = el.parentElement;
+                continue;
+              }
+              return true;
+            }
+            if (el.getAttribute && el.getAttribute("contenteditable") === "true") return true;
+            if (el.isContentEditable) return true;
+            el = el.parentElement;
+          }
+          return false;
+        }
+
+        function tryConsumeImagePaste(e) {
           var cd = e.clipboardData;
-          if (!cd || !cd.items) return;
+          if (!cd || !cd.items) return false;
           for (var i = 0; i < cd.items.length; i++) {
             var it = cd.items[i];
             if (it.type.indexOf("image") === -1) continue;
@@ -129,37 +157,30 @@
           return false;
         }
 
-        /* Capture: một số trình duyệt/iframe chỉ bắt được paste ở window. */
-        window.addEventListener(
-          "paste",
-          function (e) {
-            handlePasteEvent(e);
-          },
-          true
-        );
+        function onPasteCapture(e) {
+          if (shouldIgnorePasteTarget(e.target)) return;
+          tryConsumeImagePaste(e);
+        }
 
-        el.addEventListener("paste", function (e) {
-          handlePasteEvent(e);
-        });
+        /* Trang Streamlit (parent): Ctrl+V mọi nơi — chỉ bắt khi clipboard có ảnh. */
+        try {
+          var pw = window.parent;
+          if (pw && pw !== window && pw.document) {
+            if (!pw.__p2cGlobalImagePasteBound) {
+              pw.__p2cGlobalImagePasteBound = true;
+              pw.document.addEventListener("paste", onPasteCapture, true);
+            }
+          }
+        } catch (err) {
+          /* sandbox / cross-origin: chỉ còn nút clipboard.read */
+        }
 
-        /* Tránh dán text/HTML làm bẩn ô — chỉ giữ hướng dẫn khi dán chữ. */
-        el.addEventListener("input", function () {
-          el.textContent =
-            "Nhấp vào đây (hoặc Tab), rồi Ctrl+V / ⌘+V để dán ảnh";
-        });
-
-        el.addEventListener("focus", function () {
-          el.style.borderColor = "#005BC4";
-          el.style.background = "#eff6ff";
-        });
-        el.addEventListener("blur", function () {
-          el.style.borderColor = "#64748b";
-          el.style.background = "#f8fafc";
-        });
+        /* Fallback khi focus còn trong iframe component. */
+        window.addEventListener("paste", onPasteCapture, true);
 
         readBtn.addEventListener("click", function () {
           if (!navigator.clipboard || !navigator.clipboard.read) {
-            alert("Trình duyệt không hỗ trợ đọc clipboard — dùng Ctrl+V sau khi nhấp vào khung phía trên.");
+            alert("Trình duyệt không hỗ trợ đọc clipboard — dùng Ctrl+V trên trang (ngoài ô nhập chữ).");
             return;
           }
           navigator.clipboard
@@ -189,7 +210,7 @@
               alert("Clipboard hiện không có ảnh — hãy copy ảnh hoặc chụp màn hình rồi thử lại.");
             })
             .catch(function () {
-              alert("Không đọc được clipboard (cần HTTPS và quyền). Thử nhấp vào khung trên rồi Ctrl+V.");
+              alert("Không đọc được clipboard (cần HTTPS và quyền). Thử Ctrl+V trên trang.");
             });
         });
       })();
