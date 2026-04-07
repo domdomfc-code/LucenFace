@@ -9,7 +9,7 @@ import re
 import sys
 import zipfile
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 import streamlit as st
 from PIL import Image, ImageOps
@@ -74,6 +74,46 @@ def _decode_data_url_image(data_url: str) -> Optional[Tuple[bytes, str]]:
     return raw, f"clipboard.{ext}"
 
 
+def _gather_staged_images(upload_list: List[Any], pasted_data_url: Any) -> List[Tuple[str, bytes]]:
+    """Đọc bytes từ upload + clipboard (một lần) để xem trước và xử lý."""
+    out: List[Tuple[str, bytes]] = []
+    for up in upload_list:
+        up.seek(0)
+        out.append((up.name, up.read()))
+    if pasted_data_url:
+        dec = _decode_data_url_image(str(pasted_data_url))
+        if dec:
+            blob, fn = dec
+            out.append((fn, blob))
+    return out
+
+
+def _render_image_thumbnails(staged: List[Tuple[str, bytes]], *, cols_per_row: int = 6, width_px: int = 112) -> None:
+    st.markdown("### Xem trước")
+    st.caption(f"**{len(staged)}** ảnh — kiểm tra nhanh trước khi xử lý.")
+    for row_start in range(0, len(staged), cols_per_row):
+        cols = st.columns(cols_per_row)
+        for ci, col in enumerate(cols):
+            idx = row_start + ci
+            if idx >= len(staged):
+                break
+            fname, raw_b = staged[idx]
+            with col:
+                try:
+                    p = Image.open(io.BytesIO(raw_b))
+                    try:
+                        p = ImageOps.exif_transpose(p)
+                    except Exception:
+                        pass
+                    p = p.convert("RGB")
+                    cap = fname if len(fname) <= 32 else fname[:29] + "…"
+                    st.image(p, caption=cap, width=width_px)
+                except Exception:
+                    short = fname[:22] + "…" if len(fname) > 22 else fname
+                    st.caption(f"⚠ `{short}`")
+                    st.caption("_Không xem trước được._")
+
+
 def _read_remove_bg_api_key() -> str | None:
     """API key remove.bg: Streamlit Secrets hoặc biến môi trường REMOVEBG_API_KEY."""
     try:
@@ -108,7 +148,7 @@ def _cv2_troubleshoot_markdown() -> str:
 
 APP_TITLE = "Chuẩn hóa ảnh chân dung học sinh"
 # Đổi số khi deploy để kiểm tra Streamlit Cloud đã build bản mới (sidebar hiển thị).
-APP_BUILD = "3.8.3-paste-ctrlv-anywhere"
+APP_BUILD = "3.8.4-upload-thumbnail-previews"
 BLUE = "#005BC4"
 BG = "#F6F9FF"
 
@@ -576,14 +616,22 @@ def main() -> None:
     pasted_data_url = paste_image_from_clipboard(key="p2c_clipboard_paste")
 
     upload_list = list(uploads) if uploads else []
-    n_inputs = len(upload_list) + (1 if pasted_data_url else 0)
-    if n_inputs == 0:
+    if not upload_list and not pasted_data_url:
         st.info("Hãy **upload** ít nhất một ảnh, hoặc **dán** ảnh từ clipboard để bắt đầu.")
         return
 
-    if n_inputs > 50:
+    staged = _gather_staged_images(upload_list, pasted_data_url)
+    if not staged:
+        st.warning(
+            "Không đọc được ảnh hợp lệ — kiểm tra định dạng file (JPG/PNG) hoặc dán lại ảnh từ clipboard."
+        )
+        return
+
+    if len(staged) > 50:
         st.error("Tối đa 50 ảnh mỗi lần (upload + dán tính chung). Vui lòng giảm số lượng và thử lại.")
         return
+
+    _render_image_thumbnails(staged)
 
     st.markdown("### Xử lý hàng loạt")
     start = st.button("Bắt đầu xử lý", type="primary", width="content")
@@ -642,23 +690,7 @@ def main() -> None:
             cache_version=APP_BUILD,
         )
 
-    work_items: List[Tuple[str, bytes]] = []
-    for up in upload_list:
-        work_items.append((up.name, up.read()))
-    if pasted_data_url:
-        decoded = _decode_data_url_image(pasted_data_url)
-        if decoded is None:
-            st.warning(
-                "Không đọc được ảnh từ clipboard — chỉ hỗ trợ ảnh (PNG, JPEG, …). "
-                "Nếu bạn chỉ dán mà không upload, hãy copy lại ảnh hoặc dùng upload file."
-            )
-        else:
-            blob, fn = decoded
-            work_items.append((fn, blob))
-
-    if not work_items:
-        st.error("Không có ảnh hợp lệ để xử lý.")
-        return
+    work_items = list(staged)
 
     progress = st.progress(0)
     processed_zip_items: List[Tuple[str, bytes]] = []
