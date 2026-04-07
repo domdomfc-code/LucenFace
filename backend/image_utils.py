@@ -14,7 +14,7 @@ except Exception as e:  # pragma: no cover
     cv2 = None  # type: ignore
     _CV2_IMPORT_ERROR = repr(e)
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 
 # Optional heavy deps (often not available on Python 3.13+ on Windows)
 try:
@@ -76,6 +76,15 @@ def _bgr_to_pil(bgr: np.ndarray) -> Image.Image:
     _require_cv2()
     rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
     return Image.fromarray(rgb)
+
+
+def _pil_apply_exif_transpose(pil_img: Image.Image) -> Image.Image:
+    """Áp dụng tag Orientation trong EXIF (ảnh từ điện thoại thường bị xoay/lật trong pixel)."""
+    try:
+        out = ImageOps.exif_transpose(pil_img)
+        return out if out is not None else pil_img
+    except Exception:
+        return pil_img
 
 
 def _clamp(v: float, lo: float, hi: float) -> float:
@@ -1111,6 +1120,7 @@ def process_portrait_image(
     - Khi `replace_background` và `skip_rembg_if_uniform_background`: nếu viền khung đầu ra gần một màu
       (tiêu chuẩn phông), bỏ qua rembg và giữ nền gốc.
     - `_rembg_engine`: `"local"` (rembg + ONNX), `"remove_bg_api"` (API remove.bg), `"none"` (không tải model).
+    - EXIF Orientation được áp dụng trước; nếu vẫn không thấy mặt, thử xoay 90°/180°/270° và lật ngang/dọc.
     """
     errors: List[str] = []
     warnings: List[str] = []
@@ -1123,23 +1133,48 @@ def process_portrait_image(
         checks["Thư viện OpenCV"] = CheckResult(False, str(e))
         return ProcessResult(status="FAILED", errors=errors, warnings=warnings, checks=checks, processed_image=None)
 
-    bgr0 = _pil_to_bgr(pil_img)
-    h0, w0 = bgr0.shape[:2]
+    pil_img = _pil_apply_exif_transpose(pil_img)
+    if pil_img.mode != "RGB":
+        pil_img = pil_img.convert("RGB")
 
-    brightness, contrast = _compute_brightness_contrast(bgr0)
-    use_det_boost = brightness < 106 or contrast < 33
-    bgr_for_faces = _boost_bgr_for_face_detection(bgr0) if use_det_boost else bgr0
-    faces, n_face_candidates = _detect_faces_with_detector(
-        bgr_for_faces, min_confidence=min_face_conf, detector=_mp_face_detector
-    )
-    if len(faces) == 0 and not use_det_boost:
-        faces, n_face_candidates = _detect_faces_with_detector(
-            _boost_bgr_for_face_detection(bgr0), min_confidence=min_face_conf, detector=_mp_face_detector
-        )
+    orient_msg = "Hướng ảnh phù hợp (đã áp dụng EXIF nếu có)."
+    bgr0 = _pil_to_bgr(pil_img)
+    faces, n_face_candidates = _detect_faces_bgr_with_boost(bgr0, min_face_conf, _mp_face_detector)
+
+    if len(faces) == 0:
+        for label, op in (
+            ("xoay 90° theo chiều kim đồng hồ", lambda b: cv2.rotate(b, cv2.ROTATE_90_CLOCKWISE)),
+            ("xoay 180°", lambda b: cv2.rotate(b, cv2.ROTATE_180)),
+            ("xoay 90° ngược chiều kim đồng hồ", lambda b: cv2.rotate(b, cv2.ROTATE_90_COUNTERCLOCKWISE)),
+            ("lật ngang (ảnh gương)", lambda b: cv2.flip(b, 1)),
+            ("lật dọc", lambda b: cv2.flip(b, 0)),
+        ):
+            b_try = op(bgr0)
+            f_try, nc_try = _detect_faces_bgr_with_boost(b_try, min_face_conf, _mp_face_detector)
+            if len(f_try) > 0:
+                bgr0 = b_try
+                pil_img = _bgr_to_pil(bgr0)
+                faces, n_face_candidates = f_try, nc_try
+                orient_msg = f"Đã tự chỉnh hướng: {label}."
+                warnings.append(
+                    f"Ảnh có vẻ bị xoay hoặc lật — đã tự điều chỉnh ({label}) để nhận diện khuôn mặt."
+                )
+                break
+
     if len(faces) == 0:
         errors.append("Không tìm thấy khuôn mặt.")
+        checks["Định hướng ảnh"] = CheckResult(
+            False,
+            "Đã áp dụng EXIF và thử xoay/lật; vẫn không phát hiện mặt — hãy xoay ảnh hoặc chụp lại.",
+        )
         checks["Khuôn mặt"] = CheckResult(False, "Không phát hiện được khuôn mặt.")
         return ProcessResult(status="FAILED", errors=errors, warnings=warnings, checks=checks, processed_image=None)
+
+    checks["Định hướng ảnh"] = CheckResult(True, orient_msg)
+
+    h0, w0 = bgr0.shape[:2]
+    brightness, contrast = _compute_brightness_contrast(bgr0)
+    use_det_boost = brightness < 106 or contrast < 33
 
     if len(faces) == 1:
         sx1, sy1, sx2, sy2, _ = faces[0]
@@ -1345,6 +1380,24 @@ def _require_cv2() -> None:
     if cv2 is None:
         detail = f" Chi tiết: {_CV2_IMPORT_ERROR}" if _CV2_IMPORT_ERROR else ""
         raise RuntimeError("Thiếu OpenCV (`cv2`). Hãy cài `opencv-python-headless` rồi chạy lại." + detail)
+
+
+def _detect_faces_bgr_with_boost(
+    bgr: np.ndarray,
+    min_face_conf: float,
+    detector: Any | None,
+) -> Tuple[List[Tuple[int, int, int, int, float]], int]:
+    brightness, contrast = _compute_brightness_contrast(bgr)
+    use_det_boost = brightness < 106 or contrast < 33
+    bgr_for_faces = _boost_bgr_for_face_detection(bgr) if use_det_boost else bgr
+    faces, n_face_candidates = _detect_faces_with_detector(
+        bgr_for_faces, min_confidence=min_face_conf, detector=detector
+    )
+    if len(faces) == 0 and not use_det_boost:
+        faces, n_face_candidates = _detect_faces_with_detector(
+            _boost_bgr_for_face_detection(bgr), min_confidence=min_face_conf, detector=detector
+        )
+    return faces, n_face_candidates
 
 
 def _detect_faces_with_detector(

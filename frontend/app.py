@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Dict, List, Tuple
 
 import streamlit as st
-from PIL import Image
+from PIL import Image, ImageOps
 
 # Đảm bảo import được package `backend` khi chạy: streamlit run frontend/app.py
 _ROOT = Path(__file__).resolve().parent.parent
@@ -75,7 +75,7 @@ def _cv2_troubleshoot_markdown() -> str:
 
 APP_TITLE = "Chuẩn hóa ảnh chân dung học sinh"
 # Đổi số khi deploy để kiểm tra Streamlit Cloud đã build bản mới (sidebar hiển thị).
-APP_BUILD = "3.7.2-lazy-backend-import-healthz"
+APP_BUILD = "3.7.3-exif-orient-auto-rotate-flip"
 BLUE = "#005BC4"
 BG = "#F6F9FF"
 
@@ -611,7 +611,12 @@ def main() -> None:
         filename = up.name
 
         try:
-            pil = Image.open(io.BytesIO(raw)).convert("RGB")
+            pil = Image.open(io.BytesIO(raw))
+            try:
+                pil = ImageOps.exif_transpose(pil)
+            except Exception:
+                pass
+            pil = pil.convert("RGB")
         except Exception:
             st.error(f"Không đọc được ảnh: `{filename}`")
             continue
