@@ -1115,16 +1115,23 @@ def _score_portrait_orientation_quality(
     return score
 
 
+def _primary_face_box_largest(
+    faces: List[Tuple[int, int, int, int, float]],
+) -> Tuple[int, int, int, int, float]:
+    return max(faces, key=lambda f: (f[2] - f[0]) * (f[3] - f[1]))
+
+
 def _select_bgr_orientation_for_portrait(
     bgr0: np.ndarray,
     min_face_conf: float,
     detector: Any | None,
     *,
-    min_improve_vs_identity: float = 1.06,
+    min_improve_vs_identity: float = 1.14,
+    min_abs_score_gain: float = 0.024,
 ) -> Tuple[np.ndarray, Optional[str], List[Tuple[int, int, int, int, float]], int]:
     """
-    Luôn thử 4 hướng (gốc + 90°/180°/270°), chọn hướng có điểm cao nhất.
-    Nếu hướng gốc đã có mặt: chỉ chấp nhận xoay khi điểm tốt hơn rõ rệt (tránh xoay nhầm ảnh đã đúng).
+    Thử 4 hướng (gốc + 90°/180°/270°), chọn điểm cao nhất — nhưng nếu gốc đã có mặt thì chỉ xoay khi
+    thật sự nghiêng (bbox dẹt / ảnh ngang lạ) hoặc khi điểm xoay vượt gốc rõ rệt; tránh xoay nhầm ảnh thẳng.
     """
     _require_cv2()
     candidates: Tuple[Tuple[np.ndarray, Optional[str]], ...] = (
@@ -1155,8 +1162,24 @@ def _select_bgr_orientation_for_portrait(
     b, label, faces, n, best_score = best
 
     if label is not None and id_pack is not None and id_score >= 0:
-        if best_score < id_score * min_improve_vs_identity:
-            b0, f0, n0 = id_pack
+        b0, f0, n0 = id_pack
+        H0, W0 = int(bgr0.shape[0]), int(bgr0.shape[1])
+        fx1, fy1, fx2, fy2, _ = _primary_face_box_largest(f0)
+        fh = float(fy2 - fy1)
+        fw = float(fx2 - fx1)
+        ar_id = fh / max(fw, 1.0)
+
+        # Khung dọc hoặc gần vuông + bbox mặt không quá dẹt ngang → giữ gốc (ảnh thẳng phổ biến).
+        if H0 >= W0 * 0.94 and ar_id >= 0.64:
+            return b0, None, f0, n0
+
+        # Khung ngang nhưng mặt “đứng” trong ảnh (chân dung trong landscape) → giữ gốc.
+        if W0 > H0 and ar_id >= 0.80 and id_score >= 0.038:
+            return b0, None, f0, n0
+
+        rel_ok = best_score >= id_score * min_improve_vs_identity
+        abs_ok = (best_score - id_score) >= min_abs_score_gain
+        if not (rel_ok and abs_ok):
             return b0, None, f0, n0
 
     return b, label, faces, n
@@ -1188,8 +1211,8 @@ def process_portrait_image(
     - Khi `replace_background` và `skip_rembg_if_uniform_background`: nếu viền khung đầu ra gần một màu
       (tiêu chuẩn phông), bỏ qua rembg và giữ nền gốc.
     - `_rembg_engine`: `"local"` (rembg + ONNX), `"remove_bg_api"` (API remove.bg), `"none"` (không tải model).
-    - EXIF trước; sau đó luôn so 4 hướng (gốc + 90°/180°/270°) và chọn hướng có mặt “đứng” tốt nhất
-      (kể cả khi gốc vẫn phát hiện được mặt nhưng ảnh đang nằm ngang).
+    - EXIF trước; so 4 hướng nhưng chỉ tự xoay khi gốc nghiêng rõ (bbox dẹt / điểm thấp) hoặc xoay hơn hẳn gốc;
+      ảnh dọc hoặc landscape có mặt đứng thường giữ nguyên.
       Nếu không hướng nào có mặt nhưng lật ngang/dọc lại có → ảnh không hợp lệ.
     """
     errors: List[str] = []
