@@ -1094,6 +1094,74 @@ class PortraitProcessor:
         )
 
 
+def _score_portrait_orientation_quality(
+    bgr: np.ndarray,
+    faces: List[Tuple[int, int, int, int, float]],
+) -> float:
+    """
+    Điểm ưu tiên hướng chân dung: mặt chiếm tỷ lệ cao theo chiều dọc ảnh; bbox quá “dẹt ngang”
+    (thường gặp khi ảnh bị xoay 90°) bị phạt nhẹ.
+    """
+    if not faces:
+        return -1.0
+    fx1, fy1, fx2, fy2, _ = max(faces, key=lambda f: (f[2] - f[0]) * (f[3] - f[1]))
+    fh = float(fy2 - fy1)
+    fw = float(fx2 - fx1)
+    H = float(max(bgr.shape[0], 1))
+    score = fh / H
+    ar = fh / max(fw, 1.0)
+    if ar < 0.72:
+        score *= 0.82
+    return score
+
+
+def _select_bgr_orientation_for_portrait(
+    bgr0: np.ndarray,
+    min_face_conf: float,
+    detector: Any | None,
+    *,
+    min_improve_vs_identity: float = 1.06,
+) -> Tuple[np.ndarray, Optional[str], List[Tuple[int, int, int, int, float]], int]:
+    """
+    Luôn thử 4 hướng (gốc + 90°/180°/270°), chọn hướng có điểm cao nhất.
+    Nếu hướng gốc đã có mặt: chỉ chấp nhận xoay khi điểm tốt hơn rõ rệt (tránh xoay nhầm ảnh đã đúng).
+    """
+    _require_cv2()
+    candidates: Tuple[Tuple[np.ndarray, Optional[str]], ...] = (
+        (bgr0, None),
+        (cv2.rotate(bgr0, cv2.ROTATE_90_CLOCKWISE), "xoay 90° theo chiều kim đồng hồ"),
+        (cv2.rotate(bgr0, cv2.ROTATE_180), "xoay 180°"),
+        (cv2.rotate(bgr0, cv2.ROTATE_90_COUNTERCLOCKWISE), "xoay 90° ngược chiều kim đồng hồ"),
+    )
+
+    best: Optional[Tuple[np.ndarray, Optional[str], List[Tuple[int, int, int, int, float]], int, float]] = None
+    id_score = -1.0
+    id_pack: Optional[Tuple[np.ndarray, List[Tuple[int, int, int, int, float]], int]] = None
+
+    for b, label in candidates:
+        faces, n = _detect_faces_bgr_with_boost(b, min_face_conf, detector)
+        if len(faces) == 0:
+            continue
+        score = _score_portrait_orientation_quality(b, faces)
+        if label is None:
+            id_score = score
+            id_pack = (b, faces, n)
+        if best is None or score > best[4] + 1e-9:
+            best = (b, label, faces, n, score)
+
+    if best is None:
+        return bgr0, None, [], 0
+
+    b, label, faces, n, best_score = best
+
+    if label is not None and id_pack is not None and id_score >= 0:
+        if best_score < id_score * min_improve_vs_identity:
+            b0, f0, n0 = id_pack
+            return b0, None, f0, n0
+
+    return b, label, faces, n
+
+
 def process_portrait_image(
     pil_img: Image.Image,
     ratio: str = "3x4",
@@ -1120,8 +1188,9 @@ def process_portrait_image(
     - Khi `replace_background` và `skip_rembg_if_uniform_background`: nếu viền khung đầu ra gần một màu
       (tiêu chuẩn phông), bỏ qua rembg và giữ nền gốc.
     - `_rembg_engine`: `"local"` (rembg + ONNX), `"remove_bg_api"` (API remove.bg), `"none"` (không tải model).
-    - EXIF Orientation được áp dụng trước; nếu vẫn không thấy mặt, thử xoay 90°/180°/270°.
-      Nếu chỉ khi lật ngang/dọc mới thấy mặt → ảnh không hợp lệ, từ chối (yêu cầu upload ảnh khác).
+    - EXIF trước; sau đó luôn so 4 hướng (gốc + 90°/180°/270°) và chọn hướng có mặt “đứng” tốt nhất
+      (kể cả khi gốc vẫn phát hiện được mặt nhưng ảnh đang nằm ngang).
+      Nếu không hướng nào có mặt nhưng lật ngang/dọc lại có → ảnh không hợp lệ.
     """
     errors: List[str] = []
     warnings: List[str] = []
@@ -1140,25 +1209,16 @@ def process_portrait_image(
 
     orient_msg = "Hướng ảnh phù hợp (đã áp dụng EXIF nếu có)."
     bgr0 = _pil_to_bgr(pil_img)
-    faces, n_face_candidates = _detect_faces_bgr_with_boost(bgr0, min_face_conf, _mp_face_detector)
-
-    if len(faces) == 0:
-        for label, op in (
-            ("xoay 90° theo chiều kim đồng hồ", lambda b: cv2.rotate(b, cv2.ROTATE_90_CLOCKWISE)),
-            ("xoay 180°", lambda b: cv2.rotate(b, cv2.ROTATE_180)),
-            ("xoay 90° ngược chiều kim đồng hồ", lambda b: cv2.rotate(b, cv2.ROTATE_90_COUNTERCLOCKWISE)),
-        ):
-            b_try = op(bgr0)
-            f_try, nc_try = _detect_faces_bgr_with_boost(b_try, min_face_conf, _mp_face_detector)
-            if len(f_try) > 0:
-                bgr0 = b_try
-                pil_img = _bgr_to_pil(bgr0)
-                faces, n_face_candidates = f_try, nc_try
-                orient_msg = f"Đã tự chỉnh hướng: {label}."
-                warnings.append(
-                    f"Ảnh có vẻ bị xoay — đã tự điều chỉnh ({label}) để nhận diện khuôn mặt."
-                )
-                break
+    rot_label: Optional[str]
+    bgr0, rot_label, faces, n_face_candidates = _select_bgr_orientation_for_portrait(
+        bgr0, min_face_conf, _mp_face_detector
+    )
+    if rot_label is not None:
+        pil_img = _bgr_to_pil(bgr0)
+        orient_msg = f"Đã tự chỉnh hướng: {rot_label} (chọn hướng chân dung đúng nhất)."
+        warnings.append(
+            f"Ảnh có vẻ bị xoay — đã tự xoay ({rot_label}) để mặt đúng hướng."
+        )
 
     if len(faces) == 0:
         b_h = cv2.flip(bgr0, 1)

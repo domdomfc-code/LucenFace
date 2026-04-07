@@ -75,7 +75,7 @@ def _cv2_troubleshoot_markdown() -> str:
 
 APP_TITLE = "Chuẩn hóa ảnh chân dung học sinh"
 # Đổi số khi deploy để kiểm tra Streamlit Cloud đã build bản mới (sidebar hiển thị).
-APP_BUILD = "3.7.4-reject-mirror-flip-invalid"
+APP_BUILD = "3.7.5-pick-best-rotation-when-face-detected"
 BLUE = "#005BC4"
 BG = "#F6F9FF"
 
