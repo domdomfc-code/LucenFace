@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dán ảnh</title>
+  </head>
+  <body style="margin: 0">
+    <div
+      id="paste-zone"
+      tabindex="0"
+      style="
+        font-family: system-ui, -apple-system, sans-serif;
+        font-size: 14px;
+        padding: 10px 12px;
+        border: 1px dashed #64748b;
+        border-radius: 8px;
+        outline: none;
+        cursor: pointer;
+        background: #f8fafc;
+        color: #334155;
+        line-height: 1.45;
+      "
+    >
+      👆 Nhấp vào đây, rồi <strong>Ctrl+V</strong> (Mac: <strong>⌘+V</strong>) để dán ảnh từ clipboard
+    </div>
+    <script>
+      (function () {
+        var el = document.getElementById("paste-zone");
+        function post(msg) {
+          window.parent.postMessage(msg, "*");
+        }
+        post({ isStreamlitMessage: true, type: "streamlit:componentReady" });
+        post({ isStreamlitMessage: true, type: "streamlit:setFrameHeight", height: 76 });
+
+        el.addEventListener("focus", function () {
+          el.style.borderColor = "#005BC4";
+          el.style.background = "#eff6ff";
+        });
+        el.addEventListener("blur", function () {
+          el.style.borderColor = "#64748b";
+          el.style.background = "#f8fafc";
+        });
+
+        el.addEventListener("paste", function (e) {
+          var cd = e.clipboardData;
+          if (!cd || !cd.items) return;
+          for (var i = 0; i < cd.items.length; i++) {
+            var it = cd.items[i];
+            if (it.type.indexOf("image") === -1) continue;
+            e.preventDefault();
+            var blob = it.getAsFile();
+            if (!blob) continue;
+            var r = new FileReader();
+            r.onload = function (ev) {
+              post({
+                isStreamlitMessage: true,
+                type: "streamlit:setComponentValue",
+                value: ev.target.result,
+              });
+            };
+            r.readAsDataURL(blob);
+            return;
+          }
+        });
+      })();
+    </script>
+  </body>
+</html>

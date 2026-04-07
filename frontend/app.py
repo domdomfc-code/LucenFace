@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import base64
 import inspect
 import io
 import os
 import platform
+import re
 import sys
 import zipfile
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, List, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 import streamlit as st
 from PIL import Image, ImageOps
@@ -16,6 +18,8 @@ from PIL import Image, ImageOps
 _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
+
+from paste_image_component import paste_image_from_clipboard
 
 # Không import `backend.image_utils` lúc load module — tránh crash/OOM/timeout healthz trên Streamlit Cloud
 # (OpenCV + MediaPipe + rembg + ONNX rất nặng). Chỉ tải khi `_ensure_image_backend()` chạy.
@@ -39,6 +43,35 @@ def _ensure_image_backend() -> None:
     ProcessResult = _PR
     pil_to_jpeg_bytes = _pj
     _image_backend_loaded = True
+
+
+def _decode_data_url_image(data_url: str) -> Optional[Tuple[bytes, str]]:
+    """Parse data:image/...;base64,... → (bytes, filename gợi ý)."""
+    if not data_url or not isinstance(data_url, str) or not data_url.startswith("data:"):
+        return None
+    m = re.match(
+        r"data:image/([\w.+-]+);base64,(.+)",
+        data_url.strip(),
+        re.DOTALL | re.IGNORECASE,
+    )
+    if not m:
+        return None
+    mime = m.group(1).lower().replace("jpg", "jpeg")
+    b64 = m.group(2).strip()
+    try:
+        raw = base64.b64decode(b64, validate=False)
+    except Exception:
+        return None
+    if not raw:
+        return None
+    ext = "png"
+    if "jpeg" in mime or mime == "jpeg":
+        ext = "jpg"
+    elif "webp" in mime:
+        ext = "webp"
+    elif "gif" in mime:
+        ext = "gif"
+    return raw, f"clipboard.{ext}"
 
 
 def _read_remove_bg_api_key() -> str | None:
@@ -75,7 +108,7 @@ def _cv2_troubleshoot_markdown() -> str:
 
 APP_TITLE = "Chuẩn hóa ảnh chân dung học sinh"
 # Đổi số khi deploy để kiểm tra Streamlit Cloud đã build bản mới (sidebar hiển thị).
-APP_BUILD = "3.7.7-orient-small-face-allows-rotate"
+APP_BUILD = "3.8.0-clipboard-paste-images"
 BLUE = "#005BC4"
 BG = "#F6F9FF"
 
@@ -525,9 +558,10 @@ def main() -> None:
     else:
         blue_rgb = tuple(int(BLUE.lstrip("#")[i : i + 2], 16) for i in (0, 2, 4))
 
-    st.markdown("### Kéo & thả ảnh")
+    st.markdown("### Kéo & thả ảnh / Dán từ clipboard")
     st.markdown(
-        '<div class="card-soft muted">Mẹo: ảnh rõ mặt, thẳng góc. Bật/tắt ghép nền xanh trong sidebar trước khi xử lý. Cắt theo mặt khi bạn bật hoặc nền không đơn sắc.</div>',
+        '<div class="card-soft muted">Mẹo: ảnh rõ mặt, thẳng góc. Bật/tắt ghép nền xanh trong sidebar trước khi xử lý. Cắt theo mặt khi bạn bật hoặc nền không đơn sắc. '
+        "Có thể <strong>dán ảnh</strong>: copy ảnh (hoặc chụp màn hình), nhấp vào khung dán bên dưới, rồi Ctrl+V.</div>",
         unsafe_allow_html=True,
     )
     uploads = st.file_uploader(
@@ -535,13 +569,17 @@ def main() -> None:
         type=["jpg", "jpeg", "png"],
         accept_multiple_files=True,
     )
+    st.caption("**Dán ảnh:** nhấp vào khung, rồi Ctrl+V (Mac: ⌘+V). Ảnh rất lớn có thể chậm — nên upload file nếu được.")
+    pasted_data_url = paste_image_from_clipboard(key="p2c_clipboard_paste")
 
-    if not uploads:
-        st.info("Hãy upload ít nhất 1 ảnh để bắt đầu.")
+    upload_list = list(uploads) if uploads else []
+    n_inputs = len(upload_list) + (1 if pasted_data_url else 0)
+    if n_inputs == 0:
+        st.info("Hãy **upload** ít nhất một ảnh, hoặc **dán** ảnh từ clipboard để bắt đầu.")
         return
 
-    if len(uploads) > 50:
-        st.error("Bạn đã chọn quá 50 ảnh. Vui lòng giảm số lượng và thử lại.")
+    if n_inputs > 50:
+        st.error("Tối đa 50 ảnh mỗi lần (upload + dán tính chung). Vui lòng giảm số lượng và thử lại.")
         return
 
     st.markdown("### Xử lý hàng loạt")
@@ -601,14 +639,29 @@ def main() -> None:
             cache_version=APP_BUILD,
         )
 
+    work_items: List[Tuple[str, bytes]] = []
+    for up in upload_list:
+        work_items.append((up.name, up.read()))
+    if pasted_data_url:
+        decoded = _decode_data_url_image(pasted_data_url)
+        if decoded is None:
+            st.warning(
+                "Không đọc được ảnh từ clipboard — chỉ hỗ trợ ảnh (PNG, JPEG, …). "
+                "Nếu bạn chỉ dán mà không upload, hãy copy lại ảnh hoặc dùng upload file."
+            )
+        else:
+            blob, fn = decoded
+            work_items.append((fn, blob))
+
+    if not work_items:
+        st.error("Không có ảnh hợp lệ để xử lý.")
+        return
+
     progress = st.progress(0)
     processed_zip_items: List[Tuple[str, bytes]] = []
 
-    for idx, up in enumerate(uploads, start=1):
-        progress.progress(min(100, int((idx - 1) / max(len(uploads), 1) * 100)))
-
-        raw = up.read()
-        filename = up.name
+    for idx, (filename, raw) in enumerate(work_items, start=1):
+        progress.progress(min(100, int((idx - 1) / max(len(work_items), 1) * 100)))
 
         try:
             pil = Image.open(io.BytesIO(raw))
