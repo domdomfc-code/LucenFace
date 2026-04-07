@@ -1130,8 +1130,10 @@ def _select_bgr_orientation_for_portrait(
     min_abs_score_gain: float = 0.024,
 ) -> Tuple[np.ndarray, Optional[str], List[Tuple[int, int, int, int, float]], int]:
     """
-    Thử 4 hướng (gốc + 90°/180°/270°), chọn điểm cao nhất — nhưng nếu gốc đã có mặt thì chỉ xoay khi
-    thật sự nghiêng (bbox dẹt / ảnh ngang lạ) hoặc khi điểm xoay vượt gốc rõ rệt; tránh xoay nhầm ảnh thẳng.
+    Thử 4 hướng (gốc + 90°/180°/270°), chọn điểm cao nhất — nếu gốc đã có mặt:
+    chỉ giữ gốc khi mặt đủ lớn theo chiều dọc (≥ ~8.2% chiều cao ảnh) và bbox “đứng”; nếu mặt quá nhỏ
+    thì vẫn so với các hướng xoay (xoay 90° thường làm tăng điểm). Khi id thấp, cần margin tốt hơn
+    mới chấp nhận xoay để hạn chế xoay nhầm ảnh thẳng toàn thân.
     """
     _require_cv2()
     candidates: Tuple[Tuple[np.ndarray, Optional[str]], ...] = (
@@ -1169,16 +1171,25 @@ def _select_bgr_orientation_for_portrait(
         fw = float(fx2 - fx1)
         ar_id = fh / max(fw, 1.0)
 
-        # Khung dọc hoặc gần vuông + bbox mặt không quá dẹt ngang → giữ gốc (ảnh thẳng phổ biến).
-        if H0 >= W0 * 0.94 and ar_id >= 0.64:
+        # Chỉ “tin ảnh gốc đã thẳng” khi mặt chiếm đủ chiều cao khung; nếu quá nhỏ (~ảnh xoay 90°
+        # vẫn bắt được mặt) thì không được giữ gốc — phải so với các hướng xoay.
+        min_rel = float(min_improve_vs_identity)
+        min_abs = float(min_abs_score_gain)
+        trust_upright_min = 0.082
+        if id_score < trust_upright_min:
+            min_rel = max(min_rel, 1.20)
+            min_abs = max(min_abs, 0.032)
+
+        # Khung dọc/vuông + bbox không dẹt + mặt đủ lớn theo chiều dọc → giữ gốc.
+        if H0 >= W0 * 0.94 and ar_id >= 0.64 and id_score >= trust_upright_min:
             return b0, None, f0, n0
 
-        # Khung ngang nhưng mặt “đứng” trong ảnh (chân dung trong landscape) → giữ gốc.
-        if W0 > H0 and ar_id >= 0.80 and id_score >= 0.038:
+        # Landscape + mặt đứng trong khung + mặt đủ lớn → giữ gốc.
+        if W0 > H0 and ar_id >= 0.80 and id_score >= trust_upright_min:
             return b0, None, f0, n0
 
-        rel_ok = best_score >= id_score * min_improve_vs_identity
-        abs_ok = (best_score - id_score) >= min_abs_score_gain
+        rel_ok = best_score >= id_score * min_rel
+        abs_ok = (best_score - id_score) >= min_abs
         if not (rel_ok and abs_ok):
             return b0, None, f0, n0
 
