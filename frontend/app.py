@@ -108,7 +108,7 @@ def _cv2_troubleshoot_markdown() -> str:
 
 APP_TITLE = "Chuẩn hóa ảnh chân dung học sinh"
 # Đổi số khi deploy để kiểm tra Streamlit Cloud đã build bản mới (sidebar hiển thị).
-APP_BUILD = "3.8.1-paste-component-apiVersion-1"
+APP_BUILD = "3.8.2-paste-capture-resize-clipboard-api"
 BLUE = "#005BC4"
 BG = "#F6F9FF"
 
@@ -569,7 +569,11 @@ def main() -> None:
         type=["jpg", "jpeg", "png"],
         accept_multiple_files=True,
     )
-    st.caption("**Dán ảnh:** nhấp vào khung, rồi Ctrl+V (Mac: ⌘+V). Ảnh rất lớn có thể chậm — nên upload file nếu được.")
+    st.caption(
+        "**Dán ảnh:** (1) Nhấp vào **khung xám** (hoặc Tab tới đó), rồi **Ctrl+V** / **⌘+V**. "
+        "(2) Hoặc bấm nút **đọc clipboard** trong khung — trình duyệt sẽ hỏi quyền. "
+        "Ảnh được nén nhẹ trước khi gửi; nếu vẫn lỗi hãy dùng upload file."
+    )
     pasted_data_url = paste_image_from_clipboard(key="p2c_clipboard_paste")
 
     upload_list = list(uploads) if uploads else []

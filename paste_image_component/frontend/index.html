@@ -6,37 +6,147 @@
     <title>Dán ảnh</title>
   </head>
   <body style="margin: 0">
-    <div
-      id="paste-zone"
-      tabindex="0"
-      style="
-        font-family: system-ui, -apple-system, sans-serif;
-        font-size: 14px;
-        padding: 10px 12px;
-        border: 1px dashed #64748b;
-        border-radius: 8px;
-        outline: none;
-        cursor: pointer;
-        background: #f8fafc;
-        color: #334155;
-        line-height: 1.45;
-      "
-    >
-      👆 Nhấp vào đây, rồi <strong>Ctrl+V</strong> (Mac: <strong>⌘+V</strong>) để dán ảnh từ clipboard
+    <div id="wrap" style="display: flex; flex-direction: column; gap: 8px">
+      <div
+        id="paste-zone"
+        tabindex="0"
+        contenteditable="true"
+        spellcheck="false"
+        style="
+          font-family: system-ui, -apple-system, sans-serif;
+          font-size: 14px;
+          padding: 10px 12px;
+          border: 1px dashed #64748b;
+          border-radius: 8px;
+          outline: none;
+          cursor: text;
+          background: #f8fafc;
+          color: #334155;
+          line-height: 1.45;
+          min-height: 44px;
+          caret-color: #005bc4;
+        "
+      >
+        Nhấp vào đây (hoặc Tab), rồi <strong>Ctrl+V</strong> / <strong>⌘+V</strong> để dán ảnh
+      </div>
+      <button
+        type="button"
+        id="read-btn"
+        style="
+          font-family: system-ui, -apple-system, sans-serif;
+          font-size: 13px;
+          padding: 8px 12px;
+          border-radius: 8px;
+          border: 1px solid #cbd5e1;
+          background: #fff;
+          color: #334155;
+          cursor: pointer;
+        "
+      >
+        Hoặc bấm để đọc ảnh từ clipboard (xin quyền trình duyệt)
+      </button>
     </div>
     <script>
       (function () {
         var el = document.getElementById("paste-zone");
+        var readBtn = document.getElementById("read-btn");
+        var MAX_SIDE = 2048;
+        var JPEG_Q = 0.88;
+
         function post(msg) {
           window.parent.postMessage(msg, "*");
         }
-        /* Streamlit ≥1.43: bắt buộc apiVersion 1 cho declare_component (v1 iframe). */
+
         post({
           isStreamlitMessage: true,
           type: "streamlit:componentReady",
           apiVersion: 1,
         });
-        post({ isStreamlitMessage: true, type: "streamlit:setFrameHeight", height: 76 });
+
+        function setFrameH(h) {
+          post({ isStreamlitMessage: true, type: "streamlit:setFrameHeight", height: h });
+        }
+        setFrameH(118);
+
+        function sendToStreamlit(dataUrl) {
+          if (!dataUrl || typeof dataUrl !== "string" || dataUrl.indexOf("data:image") !== 0) return;
+          resizeToJpegDataUrl(dataUrl, function (out) {
+            post({
+              isStreamlitMessage: true,
+              type: "streamlit:setComponentValue",
+              value: out,
+            });
+          });
+        }
+
+        function resizeToJpegDataUrl(dataUrl, done) {
+          var img = new Image();
+          img.onload = function () {
+            var w = img.width;
+            var h = img.height;
+            var m = Math.max(w, h);
+            var scale = m > MAX_SIDE ? MAX_SIDE / m : 1;
+            var nw = Math.max(1, Math.round(w * scale));
+            var nh = Math.max(1, Math.round(h * scale));
+            var c = document.createElement("canvas");
+            c.width = nw;
+            c.height = nh;
+            var ctx = c.getContext("2d");
+            if (!ctx) {
+              done(dataUrl);
+              return;
+            }
+            ctx.drawImage(img, 0, 0, nw, nh);
+            try {
+              done(c.toDataURL("image/jpeg", JPEG_Q));
+            } catch (e) {
+              done(dataUrl);
+            }
+          };
+          img.onerror = function () {
+            done(dataUrl);
+          };
+          img.src = dataUrl;
+        }
+
+        function handlePasteEvent(e) {
+          var cd = e.clipboardData;
+          if (!cd || !cd.items) return;
+          for (var i = 0; i < cd.items.length; i++) {
+            var it = cd.items[i];
+            if (it.type.indexOf("image") === -1) continue;
+            e.preventDefault();
+            e.stopPropagation();
+            var blob = it.getAsFile();
+            if (!blob) continue;
+            var r = new FileReader();
+            r.onload = function (ev) {
+              sendToStreamlit(ev.target.result);
+            };
+            r.readAsDataURL(blob);
+            return true;
+          }
+          return false;
+        }
+
+        /* Capture: một số trình duyệt/iframe chỉ bắt được paste ở window. */
+        window.addEventListener(
+          "paste",
+          function (e) {
+            handlePasteEvent(e);
+          },
+          true
+        );
+
+        el.addEventListener("paste", function (e) {
+          handlePasteEvent(e);
+        });
+
+        /* Tránh dán text/HTML làm bẩn ô — chỉ giữ hướng dẫn khi dán chữ. */
+        el.addEventListener("input", function () {
+          el.textContent =
+            "Nhấp vào đây (hoặc Tab), rồi Ctrl+V / ⌘+V để dán ảnh";
+        });
 
         el.addEventListener("focus", function () {
           el.style.borderColor = "#005BC4";
@@ -47,26 +157,40 @@
           el.style.background = "#f8fafc";
         });
 
-        el.addEventListener("paste", function (e) {
-          var cd = e.clipboardData;
-          if (!cd || !cd.items) return;
-          for (var i = 0; i < cd.items.length; i++) {
-            var it = cd.items[i];
-            if (it.type.indexOf("image") === -1) continue;
-            e.preventDefault();
-            var blob = it.getAsFile();
-            if (!blob) continue;
-            var r = new FileReader();
-            r.onload = function (ev) {
-              post({
-                isStreamlitMessage: true,
-                type: "streamlit:setComponentValue",
-                value: ev.target.result,
-              });
-            };
-            r.readAsDataURL(blob);
+        readBtn.addEventListener("click", function () {
+          if (!navigator.clipboard || !navigator.clipboard.read) {
+            alert("Trình duyệt không hỗ trợ đọc clipboard — dùng Ctrl+V sau khi nhấp vào khung phía trên.");
             return;
           }
+          navigator.clipboard
+            .read()
+            .then(async function (items) {
+              for (var i = 0; i < items.length; i++) {
+                var item = items[i];
+                var types = item.types || [];
+                for (var j = 0; j < types.length; j++) {
+                  var type = types[j];
+                  if (type.indexOf("image/") !== 0) continue;
+                  try {
+                    var blob = await item.getType(type);
+                    var dataUrl = await new Promise(function (resolve, reject) {
+                      var r = new FileReader();
+                      r.onload = function () {
+                        resolve(r.result);
+                      };
+                      r.onerror = reject;
+                      r.readAsDataURL(blob);
+                    });
+                    sendToStreamlit(dataUrl);
+                    return;
+                  } catch (e) {}
+                }
+              }
+              alert("Clipboard hiện không có ảnh — hãy copy ảnh hoặc chụp màn hình rồi thử lại.");
+            })
+            .catch(function () {
+              alert("Không đọc được clipboard (cần HTTPS và quyền). Thử nhấp vào khung trên rồi Ctrl+V.");
+            });
         });
       })();
     </script>
