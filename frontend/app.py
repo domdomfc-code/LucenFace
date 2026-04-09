@@ -220,7 +220,7 @@ def _cv2_troubleshoot_markdown() -> str:
 
 APP_TITLE = "Chuẩn hóa ảnh chân dung học sinh"
 # Đổi số khi deploy để kiểm tra Streamlit Cloud đã build bản mới (sidebar hiển thị).
-APP_BUILD = "3.11.0-upload-hero-dark-centered"
+APP_BUILD = "3.11.1-upload-tagline-single-line"
 BLUE = "#005BC4"
 BG = "#F6F9FF"
 
@@ -458,15 +458,24 @@ def _inject_css() -> None:
             background: #374151;
             margin-bottom: 1rem;
           }}
+          .p2c-upload-tagline-scroll {{
+            overflow-x: auto;
+            overflow-y: hidden;
+            -webkit-overflow-scrolling: touch;
+            text-align: center;
+            margin: 0 -0.35rem;
+            padding: 0 0.35rem 0.15rem;
+            scrollbar-width: thin;
+          }}
           .p2c-upload-hero-top .p2c-upload-tagline {{
+            display: inline-block;
             margin: 0;
-            font-size: 0.98rem;
-            line-height: 1.55;
+            font-size: clamp(0.78rem, 1.1vw + 0.65rem, 0.95rem);
+            line-height: 1.45;
             color: rgba(255, 255, 255, 0.72);
             font-weight: 600;
-            max-width: 28rem;
-            margin-left: auto;
-            margin-right: auto;
+            white-space: nowrap;
+            max-width: none;
           }}
           .p2c-upload-paste-zone {{
             background: #1e1e24;
@@ -788,7 +797,7 @@ def main() -> None:
     st.caption(
         "Mẹo: ảnh rõ mặt, thẳng góc — tùy chọn ghép nền xanh và rembg nằm trong **sidebar** (☰)."
     )
-    _g_left, _g_mid, _g_right = st.columns([1, 2.35, 1])
+    _g_left, _g_mid, _g_right = st.columns([1, 3.2, 1])
     with _g_mid:
         st.markdown(
             """
@@ -800,10 +809,7 @@ def main() -> None:
       <circle cx="40" cy="18" r="5" fill="#d1d5db"/>
     </svg>
   </div>
-  <p class="p2c-upload-tagline">Kéo hình ảnh của bạn bất cứ nơi nào trên trang này hoặc nhấn
-    <strong style="color:rgba(255,255,255,0.95)">Ctrl</strong> /
-    <strong style="color:rgba(255,255,255,0.95)">⌘</strong> +
-    <strong style="color:rgba(255,255,255,0.95)">V</strong> để dán hình ảnh.</p>
+  <div class="p2c-upload-tagline-scroll"><p class="p2c-upload-tagline">Kéo hình ảnh của bạn bất cứ nơi nào trên trang này hoặc nhấn <strong style="color:rgba(255,255,255,0.95)">Ctrl</strong> / <strong style="color:rgba(255,255,255,0.95)">⌘</strong> + <strong style="color:rgba(255,255,255,0.95)">V</strong> để dán hình ảnh.</p></div>
 </div>
 """,
             unsafe_allow_html=True,
