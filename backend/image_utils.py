@@ -1250,36 +1250,30 @@ def process_portrait_image(
         orient_msg = "Hướng ảnh phù hợp (đã áp dụng EXIF nếu có)."
     bgr0 = _pil_to_bgr(pil_img)
 
-    # Luôn xử lý theo hướng gốc (sau EXIF nếu bật). Phần xoay chỉ dùng cho checklist, không ảnh hưởng output.
+    # Luôn xử lý theo hướng gốc (sau EXIF nếu bật). Phần xoay chỉ dùng để đánh giá checklist, không ảnh hưởng output.
     faces, n_face_candidates = _detect_faces_bgr_with_boost(bgr0, min_face_conf, _mp_face_detector)
+    id_score = _score_portrait_orientation_quality(bgr0, faces) if faces else -1.0
+
     rot_label: Optional[str] = None
     rot_faces: List[Tuple[int, int, int, int, float]] = []
-    rot_candidates = 0
+    rot_score = -1.0
     if auto_orient:
-        _bgr_best, rot_label, rot_faces, rot_candidates = _select_bgr_orientation_for_portrait(
+        _bgr_best, rot_label, rot_faces, _rot_n = _select_bgr_orientation_for_portrait(
             bgr0, min_face_conf, _mp_face_detector
         )
-        if rot_label is not None:
-            # Không xoay output; chỉ cảnh báo/đánh dấu checklist.
-            warnings.append(
-                f"Ảnh có vẻ bị xoay — nên xoay đúng hướng trước khi upload (gợi ý: {rot_label})."
-            )
+        if rot_label is not None and rot_faces:
+            rot_score = _score_portrait_orientation_quality(_bgr_best, rot_faces)
 
     if len(faces) == 0:
         if auto_orient:
-            # Nếu chỉ xoay mới thấy mặt: ảnh bị xoay → fail sớm.
+            # Nếu chỉ xoay mới thấy mặt: báo rõ hướng cần xoay (output vẫn không tạo được vì không thấy mặt ở ảnh gốc).
             if rot_label is not None and rot_faces:
-                errors.append(
-                    f"Ảnh không hợp lệ: có dấu hiệu bị xoay ({rot_label}). Vui lòng upload ảnh khác (đúng hướng)."
-                )
+                errors.append("Không tìm thấy khuôn mặt trong ảnh theo hướng hiện tại.")
                 checks["Định hướng ảnh"] = CheckResult(
                     False,
-                    "Ảnh bị xoay 90°/180°/270° — không chấp nhận. Hãy upload ảnh khác.",
+                    f"Ảnh có vẻ bị xoay — nếu {rot_label} thì mới phát hiện được khuôn mặt. Hãy upload ảnh khác (đúng hướng).",
                 )
-                checks["Khuôn mặt"] = CheckResult(
-                    False,
-                    "Chỉ phát hiện được mặt khi xoay ảnh; cần file gốc đúng hướng.",
-                )
+                checks["Khuôn mặt"] = CheckResult(False, "Không phát hiện được khuôn mặt.")
                 return ProcessResult(status="FAILED", errors=errors, warnings=warnings, checks=checks, processed_image=None)
 
             # Nếu chỉ lật mới thấy mặt: ảnh bị lật → fail sớm.
@@ -1320,11 +1314,17 @@ def process_portrait_image(
         checks["Khuôn mặt"] = CheckResult(False, "Không phát hiện được khuôn mặt.")
         return ProcessResult(status="FAILED", errors=errors, warnings=warnings, checks=checks, processed_image=None)
 
-    if auto_orient and rot_label is not None:
-        checks["Định hướng ảnh"] = CheckResult(
-            False,
-            f"Nghi ảnh bị xoay ({rot_label}). Output giữ nguyên hướng gốc; nên xoay đúng hướng trước khi upload.",
-        )
+    if auto_orient and rot_label is not None and rot_score > 0:
+        # Chỉ cảnh báo khi xoay giúp “mặt đứng” tốt hơn rõ rệt; tránh báo nhầm.
+        should_warn = (id_score < 0) or (rot_score >= max(id_score * 1.18, id_score + 0.030))
+        if should_warn:
+            checks["Định hướng ảnh"] = CheckResult(
+                False,
+                f"Nghi ảnh bị xoay — nếu {rot_label} thì checklist/mặt sẽ phù hợp hơn. Output vẫn giữ hướng gốc.",
+            )
+            warnings.append(f"Gợi ý: {rot_label} trước khi upload để tránh sai checklist.")
+        else:
+            checks["Định hướng ảnh"] = CheckResult(True, orient_msg)
     else:
         checks["Định hướng ảnh"] = CheckResult(True, orient_msg)
 
