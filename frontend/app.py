@@ -220,7 +220,7 @@ def _cv2_troubleshoot_markdown() -> str:
 
 APP_TITLE = "Chuẩn hóa ảnh chân dung học sinh"
 # Đổi số khi deploy để kiểm tra Streamlit Cloud đã build bản mới (sidebar hiển thị).
-APP_BUILD = "3.10.4-sidebar-advanced-before-engine"
+APP_BUILD = "3.10.5-fix-collapsed-sidebar-layout"
 BLUE = "#005BC4"
 BG = "#F6F9FF"
 
@@ -250,11 +250,8 @@ def _inject_css() -> None:
             padding-top: 1.25rem;
           }}
 
-          /* Sidebar mặc định mở + rộng tối đa hợp lý (clamp tránh tràn màn hình nhỏ). */
-          [data-testid="stSidebar"] {{
-            min-width: clamp(280px, 30rem, min(560px, 52vw)) !important;
-            width: clamp(280px, 30rem, min(560px, 52vw)) !important;
-          }}
+          /* Không ép width sidebar bằng !important: Streamlit khi thu gọn cần co width ~0;
+             nếu không, vùng trái vẫn “chiếm chỗ” và cột chính bị ép sang phải / hẹp. */
 
           /* Không ẩn cả header — Streamlit cần vùng này để mở lại sidebar khi thu gọn */
           header[data-testid="stHeader"] {{
