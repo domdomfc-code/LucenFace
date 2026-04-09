@@ -1338,16 +1338,18 @@ def process_portrait_image(
         if auto_orient:
             # Nếu chỉ xoay mới thấy mặt: vẫn tiếp tục pipeline, nhưng dùng bbox đã map về ảnh gốc.
             if rot_label is not None and rot_faces:
-                h0, w0 = bgr0.shape[:2]
-                faces = _map_faces_from_rotated_to_original(rot_faces, rot_label, w0=w0, h0=h0)
-                n_face_candidates = max(n_face_candidates, int(rot_n or len(rot_faces)))
-                warnings.append(
-                    f"Ảnh có vẻ bị xoay — phát hiện mặt bằng cách {rot_label} (output vẫn giữ hướng gốc)."
+                errors.append(
+                    f"Ảnh không hợp lệ: có dấu hiệu bị xoay ({rot_label}). Vui lòng upload ảnh khác (đúng hướng)."
                 )
                 checks["Định hướng ảnh"] = CheckResult(
                     False,
-                    f"Ảnh có vẻ bị xoay ({rot_label}). Output giữ nguyên hướng gốc; nên xoay đúng hướng trước khi upload.",
+                    "Ảnh bị xoay 90°/180°/270° — không chấp nhận. Hãy upload ảnh khác.",
                 )
+                checks["Khuôn mặt"] = CheckResult(
+                    False,
+                    "Chỉ phát hiện được mặt khi xoay ảnh; cần file gốc đúng hướng.",
+                )
+                return ProcessResult(status="FAILED", errors=errors, warnings=warnings, checks=checks, processed_image=None)
             # Nếu chỉ lật mới thấy mặt: vẫn tiếp tục pipeline, nhưng đánh dấu không đạt.
             b_h = cv2.flip(bgr0, 1)
             b_v = cv2.flip(bgr0, 0)
@@ -1360,20 +1362,20 @@ def process_portrait_image(
                     kind = "lật ngang (ảnh gương)"
                 else:
                     kind = "lật dọc (ngược chiều dọc)"
-                h0, w0 = bgr0.shape[:2]
-                if len(fh) > 0:
-                    faces = _map_faces_from_flipped_to_original(fh, flip_code=1, w0=w0, h0=h0)
-                    n_face_candidates = max(n_face_candidates, len(fh))
-                else:
-                    faces = _map_faces_from_flipped_to_original(fv, flip_code=0, w0=w0, h0=h0)
-                    n_face_candidates = max(n_face_candidates, len(fv))
-                warnings.append(
-                    "Ảnh có vẻ bị lật — đã dùng hướng lật để phát hiện mặt (output vẫn giữ hướng gốc)."
+                errors.append(
+                    "Ảnh không hợp lệ: có dấu hiệu "
+                    + kind
+                    + ". Vui lòng tải lên ảnh khác, đúng hướng chụp (không gương, không lật)."
                 )
                 checks["Định hướng ảnh"] = CheckResult(
                     False,
-                    f"Ảnh có vẻ bị lật ({kind}). Output giữ nguyên hướng gốc; nên dùng ảnh đúng hướng.",
+                    "Ảnh bị lật ngang hoặc lật ngược — không chấp nhận. Hãy upload ảnh khác.",
                 )
+                checks["Khuôn mặt"] = CheckResult(
+                    False,
+                    "Chỉ phát hiện được mặt khi lật ảnh; cần file gốc đúng hướng.",
+                )
+                return ProcessResult(status="FAILED", errors=errors, warnings=warnings, checks=checks, processed_image=None)
 
     if len(faces) == 0:
         errors.append("Không tìm thấy khuôn mặt.")
