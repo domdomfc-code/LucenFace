@@ -11,9 +11,9 @@ _frontend = Path(__file__).resolve().parent / "frontend"
 _paste_image = components.declare_component("p2c_paste_image_v1", path=str(_frontend))
 
 
-def paste_image_from_clipboard(*, key: str = "p2c_paste_clipboard") -> Any:
+def paste_image_from_clipboard(*, enable_global_paste: bool = True, key: str = "p2c_paste_clipboard") -> Any:
     """
     Trả về chuỗi data URL (base64) khi người dùng dán ảnh, hoặc None.
-    Cần click vào vùng để focus rồi mới Ctrl+V (yêu cầu của trình duyệt).
+    Lưu ý: tùy trình duyệt, có thể cần HTTPS/permission; component có nút fallback `clipboard.read()`.
     """
-    return _paste_image(default=None, key=key, tab_index=0)
+    return _paste_image(enable_global_paste=bool(enable_global_paste), default=None, key=key, tab_index=0)

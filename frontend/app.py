@@ -74,21 +74,82 @@ def _decode_data_url_image(data_url: str) -> Optional[Tuple[bytes, str]]:
     return raw, f"clipboard.{ext}"
 
 
+def _decode_data_url_image_verbose(data_url: Any) -> Tuple[Optional[Tuple[bytes, str]], str | None]:
+    """
+    Decode data URL từ clipboard, trả về (bytes, filename) hoặc (None, reason).
+    """
+    if not data_url:
+        return None, "Clipboard rỗng."
+    if not isinstance(data_url, str):
+        return None, "Dữ liệu clipboard không hợp lệ."
+    if not data_url.startswith("data:"):
+        return None, "Clipboard không phải data URL."
+    if not data_url.lower().startswith("data:image/"):
+        return None, "Clipboard không phải ảnh (data:image/...)."
+    dec = _decode_data_url_image(data_url)
+    if not dec:
+        return None, "Không giải mã được ảnh từ clipboard (base64 lỗi hoặc định dạng lạ)."
+    return dec, None
+
+
+def _sniff_image_kind(raw: bytes) -> str | None:
+    """
+    Sniff magic bytes để chặn file giả mạo không phải ảnh.
+    Trả về: 'jpeg' | 'png' | 'gif' | 'webp' hoặc None.
+    """
+    if not raw or len(raw) < 12:
+        return None
+    if raw[:2] == b"\xff\xd8":
+        return "jpeg"
+    if raw[:8] == b"\x89PNG\r\n\x1a\n":
+        return "png"
+    if raw[:6] in (b"GIF87a", b"GIF89a"):
+        return "gif"
+    if raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
+        return "webp"
+    return None
+
+
+def _normalize_filename_hint(name: str) -> str:
+    return (name or "").strip().replace("\\", "/").split("/")[-1]
+
+
+def _looks_like_heic(name: str, raw: bytes) -> bool:
+    n = _normalize_filename_hint(name).lower()
+    if n.endswith(".heic") or n.endswith(".heif"):
+        return True
+    # HEIF/HEIC brand in ftyp box
+    if len(raw) >= 12 and raw[4:8] == b"ftyp":
+        brand = raw[8:12]
+        if brand in (b"heic", b"heix", b"hevc", b"hevx", b"mif1", b"msf1"):
+            return True
+    return False
+
+
 def _gather_staged_images(upload_list: List[Any], pasted_data_url: Any) -> List[Tuple[str, bytes]]:
     """Đọc bytes từ upload + clipboard (một lần) để xem trước và xử lý."""
     out: List[Tuple[str, bytes]] = []
     for up in upload_list:
-        up.seek(0)
+        try:
+            up.seek(0)
+        except Exception:
+            pass
         out.append((up.name, up.read()))
     if pasted_data_url:
-        dec = _decode_data_url_image(str(pasted_data_url))
+        dec, _reason = _decode_data_url_image_verbose(pasted_data_url)
         if dec:
             blob, fn = dec
             out.append((fn, blob))
     return out
 
 
-def _render_image_thumbnails(staged: List[Tuple[str, bytes]], *, cols_per_row: int = 6, width_px: int = 112) -> None:
+def _render_image_thumbnails(
+    staged: List[Tuple[str, bytes]],
+    selected: Dict[str, bool],
+    *,
+    cols_per_row: int = 6,
+    width_px: int = 112,
+) -> None:
     st.markdown("### Xem trước")
     st.caption(f"**{len(staged)}** ảnh — kiểm tra nhanh trước khi xử lý.")
     for row_start in range(0, len(staged), cols_per_row):
@@ -98,7 +159,14 @@ def _render_image_thumbnails(staged: List[Tuple[str, bytes]], *, cols_per_row: i
             if idx >= len(staged):
                 break
             fname, raw_b = staged[idx]
+            key = f"sel::{idx}::{fname}"
             with col:
+                selected[key] = st.checkbox(
+                    "Chọn",
+                    value=selected.get(key, True),
+                    key=f"thumb_cb_{idx}_{hash(fname)}",
+                    label_visibility="collapsed",
+                )
                 try:
                     p = Image.open(io.BytesIO(raw_b))
                     try:
@@ -110,8 +178,12 @@ def _render_image_thumbnails(staged: List[Tuple[str, bytes]], *, cols_per_row: i
                     st.image(p, caption=cap, width=width_px)
                 except Exception:
                     short = fname[:22] + "…" if len(fname) > 22 else fname
-                    st.caption(f"⚠ `{short}`")
-                    st.caption("_Không xem trước được._")
+                    st.markdown(
+                        '<div style="display:inline-block;padding:2px 8px;border-radius:999px;background:#fee2e2;color:#991b1b;font-weight:900;font-size:12px;">Lỗi</div>',
+                        unsafe_allow_html=True,
+                    )
+                    st.caption(f"`{short}`")
+                    st.caption("Không xem trước được.")
 
 
 def _read_remove_bg_api_key() -> str | None:
@@ -148,7 +220,7 @@ def _cv2_troubleshoot_markdown() -> str:
 
 APP_TITLE = "Chuẩn hóa ảnh chân dung học sinh"
 # Đổi số khi deploy để kiểm tra Streamlit Cloud đã build bản mới (sidebar hiển thị).
-APP_BUILD = "3.8.4-upload-thumbnail-previews"
+APP_BUILD = "3.9.1-ux-toggle-global-paste-status"
 BLUE = "#005BC4"
 BG = "#F6F9FF"
 
@@ -580,6 +652,16 @@ def main() -> None:
         st.markdown("---")
         st.markdown("### Nâng cao")
         min_face_conf = st.slider("Độ tin cậy phát hiện mặt", min_value=0.3, max_value=0.9, value=0.6, step=0.05)
+        auto_orient = st.toggle(
+            "Tự xoay ảnh về đúng hướng",
+            value=True,
+            help="Tự áp dụng EXIF + chọn hướng xoay 90/180/270 tốt nhất. Tắt nếu bạn muốn giữ nguyên file gốc.",
+        )
+        enable_global_paste = st.toggle(
+            "Bắt Ctrl+V toàn trang",
+            value=True,
+            help="Bật: Ctrl+V/⌘+V ở bất kỳ đâu sẽ dán ảnh (trừ khi đang gõ trong ô chữ). Tắt nếu bạn không muốn hotkey global.",
+        )
         lazy_init = st.toggle(
             "Khởi tạo engine khi bấm xử lý",
             value=True,
@@ -613,31 +695,78 @@ def main() -> None:
         "**Dán ảnh:** **Ctrl+V** / **⌘+V** ở bất kỳ đâu trên trang (không cần nhấp ô) — không áp dụng khi focus đang ở ô nhập chữ/sidebar text. "
         "Hoặc bấm **đọc clipboard** trong khung component. Ảnh được nén trước khi gửi."
     )
-    pasted_data_url = paste_image_from_clipboard(key="p2c_clipboard_paste")
+    nonce = int(st.session_state.get("p2c_clipboard_paste_nonce", 0))
+    pasted_data_url = paste_image_from_clipboard(
+        enable_global_paste=enable_global_paste,
+        key=f"p2c_clipboard_paste_{nonce}",
+    )
 
     upload_list = list(uploads) if uploads else []
     if not upload_list and not pasted_data_url:
         st.info("Hãy **upload** ít nhất một ảnh, hoặc **dán** ảnh từ clipboard để bắt đầu.")
         return
 
+    # Stage bytes into session_state so previews don't re-read unpredictably across reruns.
     staged = _gather_staged_images(upload_list, pasted_data_url)
     if not staged:
-        st.warning(
-            "Không đọc được ảnh hợp lệ — kiểm tra định dạng file (JPG/PNG) hoặc dán lại ảnh từ clipboard."
-        )
+        if pasted_data_url and not upload_list:
+            _dec, reason = _decode_data_url_image_verbose(pasted_data_url)
+            if reason:
+                st.warning(f"Không nhận được ảnh từ clipboard. Lý do: **{reason}**")
+        st.warning("Không đọc được ảnh hợp lệ — chỉ hỗ trợ **JPG/PNG** (HEIC/HEIF cần export sang JPG).")
         return
 
     if len(staged) > 50:
         st.error("Tối đa 50 ảnh mỗi lần (upload + dán tính chung). Vui lòng giảm số lượng và thử lại.")
         return
 
-    _render_image_thumbnails(staged)
+    # Clipboard utilities
+    c1, c2 = st.columns([1, 2], gap="small")
+    with c1:
+        if st.button("Xóa ảnh clipboard", width="content"):
+            # Reset by changing component key
+            st.session_state["p2c_clipboard_paste_nonce"] = int(st.session_state.get("p2c_clipboard_paste_nonce", 0)) + 1
+            st.rerun()
+    with c2:
+        if pasted_data_url:
+            dec = _decode_data_url_image(str(pasted_data_url))
+            if dec:
+                blob, fn = dec
+                st.success(f"Đã nhận ảnh từ clipboard: `{fn}` ({len(blob)/1024:.0f} KB).")
+
+    # Selection
+    if "p2c_selected" not in st.session_state:
+        st.session_state["p2c_selected"] = {}
+    selected: Dict[str, bool] = st.session_state["p2c_selected"]
+
+    a1, a2, a3 = st.columns([1, 1, 2], gap="small")
+    with a1:
+        if st.button("Chọn tất cả", width="content"):
+            for i, (fname, _) in enumerate(staged):
+                selected[f"sel::{i}::{fname}"] = True
+    with a2:
+        if st.button("Bỏ chọn", width="content"):
+            for i, (fname, _) in enumerate(staged):
+                selected[f"sel::{i}::{fname}"] = False
+    with a3:
+        st.caption("Bạn có thể bỏ chọn ảnh không muốn xử lý.")
+
+    _render_image_thumbnails(staged, selected)
 
     st.markdown("### Xử lý hàng loạt")
-    start = st.button("Bắt đầu xử lý", type="primary", width="content")
+    selected_n = sum(1 for i, (fname, _raw) in enumerate(staged) if selected.get(f"sel::{i}::{fname}", True))
+    st.caption(f"Đã chọn **{selected_n}/{len(staged)}** ảnh (giới hạn tối đa **50**).")
+    b1, b2 = st.columns([1, 1], gap="small")
+    with b1:
+        start = st.button("Bắt đầu xử lý", type="primary", width="content")
+    with b2:
+        stop_now = st.button("Dừng", width="content")
+        if stop_now:
+            st.session_state["p2c_stop"] = True
     if not start:
         st.caption("Bấm **Bắt đầu xử lý** để chạy pipeline cho toàn bộ ảnh.")
         return
+    st.session_state["p2c_stop"] = False
 
     if replace_blue_bg and rembg_engine == "remove_bg_api" and not _read_remove_bg_api_key():
         st.error(
@@ -690,12 +819,61 @@ def main() -> None:
             cache_version=APP_BUILD,
         )
 
-    work_items = list(staged)
+    # Filter selected items + basic validation limits
+    MAX_BYTES = 12 * 1024 * 1024  # ~12MB per image staged (post-clipboard compression typically smaller)
+    MIN_W, MIN_H = 300, 400
+    work_items: List[Tuple[str, bytes]] = []
+    rejected: List[Tuple[str, str]] = []
+    for i, (fname, raw) in enumerate(staged):
+        if not selected.get(f"sel::{i}::{fname}", True):
+            continue
+        fname_norm = _normalize_filename_hint(fname)
+        if _looks_like_heic(fname_norm, raw):
+            rejected.append((fname_norm, "Định dạng HEIC/HEIF chưa hỗ trợ — hãy Export/Save As **JPG** rồi upload lại."))
+            continue
+        kind = _sniff_image_kind(raw)
+        if kind is None:
+            rejected.append((fname_norm, "File không giống ảnh hợp lệ (magic bytes không khớp JPG/PNG/GIF/WebP)."))
+            continue
+        if len(raw) > MAX_BYTES:
+            rejected.append((fname_norm, f"File quá nặng ({len(raw)/1024/1024:.1f} MB) — hãy upload ảnh nhỏ hơn."))
+            continue
+        try:
+            im = Image.open(io.BytesIO(raw))
+            w, h = im.size
+            if w < MIN_W or h < MIN_H:
+                rejected.append((fname_norm, f"Ảnh quá nhỏ ({w}×{h}) — tối thiểu {MIN_W}×{MIN_H}."))
+                continue
+            mode = (im.mode or "").upper()
+            if mode in ("CMYK", "I;16", "I;16B", "I;16L", "I;16S", "I"):
+                # Vẫn xử lý được khi convert RGB, nhưng cảnh báo sớm để tránh màu sai.
+                rejected.append((fname_norm, f"Ảnh ở chế độ {mode} (có thể lệch màu). Hãy xuất lại **RGB JPG** nếu bị sai."))
+                continue
+            # verify then reopen later in pipeline
+            im.verify()
+        except Exception:
+            rejected.append((fname_norm, "Không đọc được ảnh hoặc file không hợp lệ."))
+            continue
+        work_items.append((fname_norm, raw))
 
+    if rejected:
+        st.warning("Một số ảnh bị loại do không hợp lệ.")
+        st.dataframe([{"file": f, "reason": r} for f, r in rejected], use_container_width=True, hide_index=True)
+
+    if not work_items:
+        st.error("Không có ảnh hợp lệ (hoặc bạn đã bỏ chọn hết).")
+        return
+
+    status_line = st.empty()
     progress = st.progress(0)
     processed_zip_items: List[Tuple[str, bytes]] = []
+    failed_items: List[Dict[str, str]] = []
 
     for idx, (filename, raw) in enumerate(work_items, start=1):
+        if st.session_state.get("p2c_stop"):
+            st.warning("Đã dừng theo yêu cầu. Bạn có thể chỉnh lựa chọn rồi bấm **Bắt đầu xử lý** lại.")
+            break
+        status_line.caption(f"Đang xử lý **{idx}/{len(work_items)}**: `{filename}`")
         progress.progress(min(100, int((idx - 1) / max(len(work_items), 1) * 100)))
 
         try:
@@ -707,6 +885,7 @@ def main() -> None:
             pil = pil.convert("RGB")
         except Exception:
             st.error(f"Không đọc được ảnh: `{filename}`")
+            failed_items.append({"file": filename, "reason": "Không đọc được ảnh."})
             continue
 
         with st.spinner(f"Đang xử lý: {filename}"):
@@ -717,9 +896,11 @@ def main() -> None:
                     prefer_face_crop=prefer_face_crop,
                     replace_blue_bg=replace_blue_bg,
                     skip_rembg_if_uniform_background=not force_blue_despite_uniform,
+                    auto_orient=auto_orient,
                 )
             except RuntimeError as e:
                 st.error(str(e))
+                failed_items.append({"file": filename, "reason": str(e)})
                 continue
 
         with st.container():
@@ -752,6 +933,7 @@ def main() -> None:
                 st.markdown("**Processed**")
                 if res.processed_image is None:
                     st.info("Không xử lý được do lỗi phát hiện khuôn mặt.")
+                    failed_items.append({"file": filename, "reason": "Không tạo được ảnh đầu ra."})
                 else:
                     st.image(res.processed_image, width="stretch")
                     _ensure_image_backend()
@@ -774,6 +956,12 @@ def main() -> None:
     progress.progress(100)
 
     st.markdown("### Tải về toàn bộ")
+    ok_n = len(processed_zip_items)
+    fail_n = len(failed_items) + len(rejected)
+    st.markdown(f"**Kết quả:** OK **{ok_n}**, FAILED/loại **{fail_n}**.")
+    if failed_items:
+        st.markdown("### Danh sách lỗi")
+        st.dataframe(failed_items, use_container_width=True, hide_index=True)
     if processed_zip_items:
         zip_bytes = _make_zip(processed_zip_items)
         st.download_button(

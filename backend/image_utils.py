@@ -1076,6 +1076,7 @@ class PortraitProcessor:
         prefer_face_crop: bool = False,
         replace_background: bool = True,
         skip_rembg_if_uniform_background: bool = True,
+        auto_orient: bool = True,
     ) -> ProcessResult:
         return process_portrait_image(
             pil_img,
@@ -1085,6 +1086,7 @@ class PortraitProcessor:
             prefer_face_crop=prefer_face_crop,
             replace_background=replace_background,
             skip_rembg_if_uniform_background=skip_rembg_if_uniform_background,
+            auto_orient=auto_orient,
             _mp_face_detector=self._fd,
             _rembg_session=self._rembg_session,
             _selfie_segmentation=self._selfie,
@@ -1204,6 +1206,7 @@ def process_portrait_image(
     prefer_face_crop: bool = False,
     replace_background: bool = True,
     skip_rembg_if_uniform_background: bool = True,
+    auto_orient: bool = True,
     _mp_face_detector: Any | None = None,
     _rembg_session: Any | None = None,
     _selfie_segmentation: Any | None = None,
@@ -1237,55 +1240,64 @@ def process_portrait_image(
         checks["Thư viện OpenCV"] = CheckResult(False, str(e))
         return ProcessResult(status="FAILED", errors=errors, warnings=warnings, checks=checks, processed_image=None)
 
-    pil_img = _pil_apply_exif_transpose(pil_img)
+    if auto_orient:
+        pil_img = _pil_apply_exif_transpose(pil_img)
     if pil_img.mode != "RGB":
         pil_img = pil_img.convert("RGB")
 
-    orient_msg = "Hướng ảnh phù hợp (đã áp dụng EXIF nếu có)."
+    orient_msg = "Hướng ảnh phù hợp."
+    if auto_orient:
+        orient_msg = "Hướng ảnh phù hợp (đã áp dụng EXIF nếu có)."
     bgr0 = _pil_to_bgr(pil_img)
-    rot_label: Optional[str]
-    bgr0, rot_label, faces, n_face_candidates = _select_bgr_orientation_for_portrait(
-        bgr0, min_face_conf, _mp_face_detector
-    )
-    if rot_label is not None:
-        pil_img = _bgr_to_pil(bgr0)
-        orient_msg = f"Đã tự chỉnh hướng: {rot_label} (chọn hướng chân dung đúng nhất)."
-        warnings.append(
-            f"Ảnh có vẻ bị xoay — đã tự xoay ({rot_label}) để mặt đúng hướng."
+    rot_label: Optional[str] = None
+    faces: List[Tuple[int, int, int, int, float]] = []
+    n_face_candidates = 0
+    if auto_orient:
+        bgr0, rot_label, faces, n_face_candidates = _select_bgr_orientation_for_portrait(
+            bgr0, min_face_conf, _mp_face_detector
         )
+        if rot_label is not None:
+            pil_img = _bgr_to_pil(bgr0)
+            orient_msg = f"Đã tự chỉnh hướng: {rot_label} (chọn hướng chân dung đúng nhất)."
+            warnings.append(f"Ảnh có vẻ bị xoay — đã tự xoay ({rot_label}) để mặt đúng hướng.")
+    else:
+        faces, n_face_candidates = _detect_faces_bgr_with_boost(bgr0, min_face_conf, _mp_face_detector)
 
     if len(faces) == 0:
-        b_h = cv2.flip(bgr0, 1)
-        b_v = cv2.flip(bgr0, 0)
-        fh, _ = _detect_faces_bgr_with_boost(b_h, min_face_conf, _mp_face_detector)
-        fv, _ = _detect_faces_bgr_with_boost(b_v, min_face_conf, _mp_face_detector)
-        if len(fh) > 0 or len(fv) > 0:
-            if len(fh) > 0 and len(fv) > 0:
-                kind = "lật ngang và/hoặc lật dọc"
-            elif len(fh) > 0:
-                kind = "lật ngang (ảnh gương)"
-            else:
-                kind = "lật dọc (ngược chiều dọc)"
-            errors.append(
-                "Ảnh không hợp lệ: có dấu hiệu "
-                + kind
-                + ". Vui lòng tải lên ảnh khác, đúng hướng chụp (không gương, không lật)."
-            )
-            checks["Định hướng ảnh"] = CheckResult(
-                False,
-                "Ảnh bị lật ngang hoặc lật ngược — không chấp nhận. Hãy upload ảnh khác.",
-            )
-            checks["Khuôn mặt"] = CheckResult(
-                False,
-                "Chỉ phát hiện được mặt khi lật ảnh; cần file gốc đúng hướng.",
-            )
-            return ProcessResult(status="FAILED", errors=errors, warnings=warnings, checks=checks, processed_image=None)
+        if auto_orient:
+            b_h = cv2.flip(bgr0, 1)
+            b_v = cv2.flip(bgr0, 0)
+            fh, _ = _detect_faces_bgr_with_boost(b_h, min_face_conf, _mp_face_detector)
+            fv, _ = _detect_faces_bgr_with_boost(b_v, min_face_conf, _mp_face_detector)
+            if len(fh) > 0 or len(fv) > 0:
+                if len(fh) > 0 and len(fv) > 0:
+                    kind = "lật ngang và/hoặc lật dọc"
+                elif len(fh) > 0:
+                    kind = "lật ngang (ảnh gương)"
+                else:
+                    kind = "lật dọc (ngược chiều dọc)"
+                errors.append(
+                    "Ảnh không hợp lệ: có dấu hiệu "
+                    + kind
+                    + ". Vui lòng tải lên ảnh khác, đúng hướng chụp (không gương, không lật)."
+                )
+                checks["Định hướng ảnh"] = CheckResult(
+                    False,
+                    "Ảnh bị lật ngang hoặc lật ngược — không chấp nhận. Hãy upload ảnh khác.",
+                )
+                checks["Khuôn mặt"] = CheckResult(
+                    False,
+                    "Chỉ phát hiện được mặt khi lật ảnh; cần file gốc đúng hướng.",
+                )
+                return ProcessResult(
+                    status="FAILED", errors=errors, warnings=warnings, checks=checks, processed_image=None
+                )
 
     if len(faces) == 0:
         errors.append("Không tìm thấy khuôn mặt.")
         checks["Định hướng ảnh"] = CheckResult(
             False,
-            "Đã áp dụng EXIF và thử xoay 90°/180°/270°; vẫn không phát hiện mặt — hãy xoay ảnh hoặc chụp lại.",
+            "Không phát hiện mặt — hãy chụp lại rõ mặt, đúng hướng.",
         )
         checks["Khuôn mặt"] = CheckResult(False, "Không phát hiện được khuôn mặt.")
         return ProcessResult(status="FAILED", errors=errors, warnings=warnings, checks=checks, processed_image=None)

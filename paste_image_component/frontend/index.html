@@ -45,6 +45,8 @@
         var readBtn = document.getElementById("read-btn");
         var MAX_SIDE = 2048;
         var JPEG_Q = 0.88;
+        var enableGlobalPaste = true;
+        var boundToParent = false;
 
         function post(msg) {
           window.parent.postMessage(msg, "*");
@@ -163,20 +165,45 @@
         }
 
         /* Trang Streamlit (parent): Ctrl+V mọi nơi — chỉ bắt khi clipboard có ảnh. */
-        try {
-          var pw = window.parent;
-          if (pw && pw !== window && pw.document) {
-            if (!pw.__p2cGlobalImagePasteBound) {
-              pw.__p2cGlobalImagePasteBound = true;
+        function bindOrUnbindGlobalPaste() {
+          try {
+            var pw = window.parent;
+            if (!pw || pw === window || !pw.document) return;
+            if (enableGlobalPaste && !boundToParent) {
               pw.document.addEventListener("paste", onPasteCapture, true);
+              boundToParent = true;
             }
+            if (!enableGlobalPaste && boundToParent) {
+              pw.document.removeEventListener("paste", onPasteCapture, true);
+              boundToParent = false;
+            }
+          } catch (err) {
+            /* sandbox / cross-origin: chỉ còn nút clipboard.read */
           }
-        } catch (err) {
-          /* sandbox / cross-origin: chỉ còn nút clipboard.read */
         }
+        bindOrUnbindGlobalPaste();
 
         /* Fallback khi focus còn trong iframe component. */
         window.addEventListener("paste", onPasteCapture, true);
+
+        // Nhận args từ Streamlit để bật/tắt global paste.
+        window.addEventListener("message", function (event) {
+          var d = event && event.data;
+          if (!d || d.isStreamlitMessage !== true) return;
+          if (d.type !== "streamlit:render") return;
+          var args = d.args;
+          if (typeof args === "string") {
+            try {
+              args = JSON.parse(args);
+            } catch (e) {
+              args = null;
+            }
+          }
+          if (args && typeof args === "object" && Object.prototype.hasOwnProperty.call(args, "enable_global_paste")) {
+            enableGlobalPaste = !!args.enable_global_paste;
+            bindOrUnbindGlobalPaste();
+          }
+        });
 
         readBtn.addEventListener("click", function () {
           if (!navigator.clipboard || !navigator.clipboard.read) {
