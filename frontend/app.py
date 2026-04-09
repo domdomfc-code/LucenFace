@@ -220,7 +220,7 @@ def _cv2_troubleshoot_markdown() -> str:
 
 APP_TITLE = "Chuẩn hóa ảnh chân dung học sinh"
 # Đổi số khi deploy để kiểm tra Streamlit Cloud đã build bản mới (sidebar hiển thị).
-APP_BUILD = "3.9.1-ux-toggle-global-paste-status"
+APP_BUILD = "3.9.2-fix-run-processor-auto-orient"
 BLUE = "#005BC4"
 BG = "#F6F9FF"
 
@@ -523,6 +523,7 @@ def _run_processor(
     prefer_face_crop: bool,
     replace_blue_bg: bool,
     skip_rembg_if_uniform_background: bool = True,
+    auto_orient: bool = True,
 ) -> ProcessResult:
     """
     Gọi `PortraitProcessor.process` — chỉ truyền các kwarg có trong chữ ký
@@ -534,6 +535,8 @@ def _run_processor(
         kw["replace_background"] = replace_blue_bg
     if "skip_rembg_if_uniform_background" in params:
         kw["skip_rembg_if_uniform_background"] = skip_rembg_if_uniform_background
+    if "auto_orient" in params:
+        kw["auto_orient"] = bool(auto_orient)
     return processor.process(pil, prefer_face_crop=prefer_face_crop, **kw)
 
 
