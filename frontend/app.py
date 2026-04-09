@@ -220,7 +220,7 @@ def _cv2_troubleshoot_markdown() -> str:
 
 APP_TITLE = "Chuẩn hóa ảnh chân dung học sinh"
 # Đổi số khi deploy để kiểm tra Streamlit Cloud đã build bản mới (sidebar hiển thị).
-APP_BUILD = "3.10.0-auto-face-crop-when-small-in-frame"
+APP_BUILD = "3.10.1-defaults-sidebar-collapsed"
 BLUE = "#005BC4"
 BG = "#F6F9FF"
 
@@ -541,7 +541,12 @@ def _run_processor(
 
 
 def main() -> None:
-    st.set_page_config(page_title=APP_TITLE, page_icon="🪪", layout="wide")
+    st.set_page_config(
+        page_title=APP_TITLE,
+        page_icon="🪪",
+        layout="wide",
+        initial_sidebar_state="collapsed",
+    )
     _inject_css()
     _sidebar_reopen_button()
 
@@ -621,7 +626,7 @@ def main() -> None:
         )
         force_blue_despite_uniform = False
         rembg_engine = "none"
-        rembg_model = "u2net"
+        rembg_model = "u2net_human_seg"
         if replace_blue_bg:
             force_blue_despite_uniform = st.toggle(
                 "Luôn ghép nền xanh (kể cả phông đã một màu)",
@@ -647,17 +652,18 @@ def main() -> None:
                     st.warning("Thêm `REMOVEBG_API_KEY` trong **Streamlit Secrets** hoặc biến môi trường.")
             else:
                 rembg_engine = "local"
+                _rembg_models = ["u2net", "isnet-general-use", "u2net_human_seg", "silueta"]
                 rembg_model = st.selectbox(
                     "Model rembg (ONNX)",
-                    options=["u2net", "isnet-general-use", "u2net_human_seg", "silueta"],
-                    index=0,
-                    help="**u2net** (mặc định): ổn định với pymatting. ISNet/human_seg: không dùng pymatting (tránh viền mờ kép).",
+                    options=_rembg_models,
+                    index=_rembg_models.index("u2net_human_seg"),
+                    help="**u2net_human_seg** (mặc định): tốt cho người. **u2net**: ổn định với pymatting. ISNet: không dùng pymatting (tránh viền mờ kép).",
                 )
         max_files = 50
         st.caption(f"Tối đa {max_files} ảnh/lần.")
         st.markdown("---")
         st.markdown("### Nâng cao")
-        min_face_conf = st.slider("Độ tin cậy phát hiện mặt", min_value=0.3, max_value=0.9, value=0.6, step=0.05)
+        min_face_conf = st.slider("Độ tin cậy phát hiện mặt", min_value=0.3, max_value=0.9, value=0.9, step=0.05)
         auto_orient = st.toggle(
             "Kiểm tra hướng ảnh (không xoay output)",
             value=True,
