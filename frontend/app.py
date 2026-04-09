@@ -220,7 +220,7 @@ def _cv2_troubleshoot_markdown() -> str:
 
 APP_TITLE = "Chuẩn hóa ảnh chân dung học sinh"
 # Đổi số khi deploy để kiểm tra Streamlit Cloud đã build bản mới (sidebar hiển thị).
-APP_BUILD = "3.10.3-sidebar-order-blue-before-engine"
+APP_BUILD = "3.10.4-sidebar-advanced-before-engine"
 BLUE = "#005BC4"
 BG = "#F6F9FF"
 
@@ -645,6 +645,30 @@ def main() -> None:
             st.markdown("### Thông số nền xanh")
             st.caption("Chuẩn mặc định: `#005BC4` (RGB 0, 91, 196).")
             blue_hex = st.color_picker("Chọn màu nền", value=BLUE)
+        else:
+            st.caption("Ghép nền xanh đang **tắt** — không dùng rembg; màu nền bên dưới không áp dụng.")
+        max_files = 50
+        st.caption(f"Tối đa {max_files} ảnh/lần.")
+        st.markdown("---")
+        st.markdown("### Nâng cao")
+        min_face_conf = st.slider("Độ tin cậy phát hiện mặt", min_value=0.3, max_value=0.9, value=0.9, step=0.05)
+        auto_orient = st.toggle(
+            "Kiểm tra hướng ảnh (không xoay output)",
+            value=True,
+            help="Bật: hệ thống sẽ thử xoay khi kiểm tra checklist để cảnh báo ảnh bị xoay/lật, nhưng ảnh xuất ra vẫn giữ hướng gốc.",
+        )
+        enable_global_paste = st.toggle(
+            "Bắt Ctrl+V toàn trang",
+            value=True,
+            help="Bật: Ctrl+V/⌘+V ở bất kỳ đâu sẽ dán ảnh (trừ khi đang gõ trong ô chữ). Tắt nếu bạn không muốn hotkey global.",
+        )
+        lazy_init = st.toggle(
+            "Khởi tạo engine khi bấm xử lý",
+            value=True,
+            help="Tránh đứng UI khi tải MediaPipe (và rembg nếu bật ghép nền xanh).",
+        )
+        if replace_blue_bg:
+            st.markdown("---")
             st.markdown("### Engine tách nền")
             _eng_pick = st.radio(
                 "Nguồn tách nền",
@@ -668,28 +692,6 @@ def main() -> None:
                     index=_rembg_models.index("u2net_human_seg"),
                     help="**u2net_human_seg** (mặc định): tốt cho người. **u2net**: ổn định với pymatting. ISNet: không dùng pymatting (tránh viền mờ kép).",
                 )
-        else:
-            st.caption("Ghép nền xanh đang **tắt** — không dùng rembg; màu nền bên dưới không áp dụng.")
-        max_files = 50
-        st.caption(f"Tối đa {max_files} ảnh/lần.")
-        st.markdown("---")
-        st.markdown("### Nâng cao")
-        min_face_conf = st.slider("Độ tin cậy phát hiện mặt", min_value=0.3, max_value=0.9, value=0.9, step=0.05)
-        auto_orient = st.toggle(
-            "Kiểm tra hướng ảnh (không xoay output)",
-            value=True,
-            help="Bật: hệ thống sẽ thử xoay khi kiểm tra checklist để cảnh báo ảnh bị xoay/lật, nhưng ảnh xuất ra vẫn giữ hướng gốc.",
-        )
-        enable_global_paste = st.toggle(
-            "Bắt Ctrl+V toàn trang",
-            value=True,
-            help="Bật: Ctrl+V/⌘+V ở bất kỳ đâu sẽ dán ảnh (trừ khi đang gõ trong ô chữ). Tắt nếu bạn không muốn hotkey global.",
-        )
-        lazy_init = st.toggle(
-            "Khởi tạo engine khi bấm xử lý",
-            value=True,
-            help="Tránh đứng UI khi tải MediaPipe (và rembg nếu bật ghép nền xanh).",
-        )
 
     if replace_blue_bg:
         blue_rgb = tuple(int(blue_hex.lstrip("#")[i : i + 2], 16) for i in (0, 2, 4))
