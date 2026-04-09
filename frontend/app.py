@@ -220,7 +220,7 @@ def _cv2_troubleshoot_markdown() -> str:
 
 APP_TITLE = "Chuẩn hóa ảnh chân dung học sinh"
 # Đổi số khi deploy để kiểm tra Streamlit Cloud đã build bản mới (sidebar hiển thị).
-APP_BUILD = "3.10.2-sidebar-expanded-wide"
+APP_BUILD = "3.10.3-sidebar-order-blue-before-engine"
 BLUE = "#005BC4"
 BG = "#F6F9FF"
 
@@ -642,6 +642,9 @@ def main() -> None:
                     "Bật: **luôn** ghép màu nền bạn chọn kể cả khi phông đã một màu (đổi màu nền; có thể viền artefact trên áo tối)."
                 ),
             )
+            st.markdown("### Thông số nền xanh")
+            st.caption("Chuẩn mặc định: `#005BC4` (RGB 0, 91, 196).")
+            blue_hex = st.color_picker("Chọn màu nền", value=BLUE)
             st.markdown("### Engine tách nền")
             _eng_pick = st.radio(
                 "Nguồn tách nền",
@@ -665,6 +668,8 @@ def main() -> None:
                     index=_rembg_models.index("u2net_human_seg"),
                     help="**u2net_human_seg** (mặc định): tốt cho người. **u2net**: ổn định với pymatting. ISNet: không dùng pymatting (tránh viền mờ kép).",
                 )
+        else:
+            st.caption("Ghép nền xanh đang **tắt** — không dùng rembg; màu nền bên dưới không áp dụng.")
         max_files = 50
         st.caption(f"Tối đa {max_files} ảnh/lần.")
         st.markdown("---")
@@ -685,13 +690,6 @@ def main() -> None:
             value=True,
             help="Tránh đứng UI khi tải MediaPipe (và rembg nếu bật ghép nền xanh).",
         )
-        st.markdown("---")
-        if replace_blue_bg:
-            st.markdown("### Thông số nền xanh")
-            st.caption("Chuẩn mặc định: `#005BC4` (RGB 0, 91, 196).")
-            blue_hex = st.color_picker("Chọn màu nền", value=BLUE)
-        else:
-            st.caption("Ghép nền xanh đang **tắt** — không dùng rembg; màu nền bên dưới không áp dụng.")
 
     if replace_blue_bg:
         blue_rgb = tuple(int(blue_hex.lstrip("#")[i : i + 2], 16) for i in (0, 2, 4))
