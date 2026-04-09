@@ -220,7 +220,7 @@ def _cv2_troubleshoot_markdown() -> str:
 
 APP_TITLE = "Chuẩn hóa ảnh chân dung học sinh"
 # Đổi số khi deploy để kiểm tra Streamlit Cloud đã build bản mới (sidebar hiển thị).
-APP_BUILD = "3.9.2-fix-run-processor-auto-orient"
+APP_BUILD = "3.9.5-orient-check-only-no-rotate-output"
 BLUE = "#005BC4"
 BG = "#F6F9FF"
 
@@ -656,9 +656,9 @@ def main() -> None:
         st.markdown("### Nâng cao")
         min_face_conf = st.slider("Độ tin cậy phát hiện mặt", min_value=0.3, max_value=0.9, value=0.6, step=0.05)
         auto_orient = st.toggle(
-            "Tự xoay ảnh về đúng hướng",
+            "Kiểm tra hướng ảnh (không xoay output)",
             value=True,
-            help="Tự áp dụng EXIF + chọn hướng xoay 90/180/270 tốt nhất. Tắt nếu bạn muốn giữ nguyên file gốc.",
+            help="Bật: hệ thống sẽ thử xoay khi kiểm tra checklist để cảnh báo ảnh bị xoay/lật, nhưng ảnh xuất ra vẫn giữ hướng gốc.",
         )
         enable_global_paste = st.toggle(
             "Bắt Ctrl+V toàn trang",
