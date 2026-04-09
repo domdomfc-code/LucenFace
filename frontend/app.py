@@ -220,7 +220,7 @@ def _cv2_troubleshoot_markdown() -> str:
 
 APP_TITLE = "Chuẩn hóa ảnh chân dung học sinh"
 # Đổi số khi deploy để kiểm tra Streamlit Cloud đã build bản mới (sidebar hiển thị).
-APP_BUILD = "3.9.9-reject-sideways-rotation-heuristic"
+APP_BUILD = "3.10.0-auto-face-crop-when-small-in-frame"
 BLUE = "#005BC4"
 BG = "#F6F9FF"
 
@@ -600,7 +600,7 @@ def main() -> None:
               - Tỷ lệ khuôn mặt hợp lý
               - Độ sáng & tương phản đủ
               - **Phông nền**: ảnh gốc & khung đầu ra — viền gần **một màu** (đạt chuẩn) hay không
-            - **Khung**: mặc định giữ ảnh gốc (scale); cắt theo mặt nếu bạn bật hoặc nền không đơn sắc.
+            - **Khung**: mặc định giữ ảnh gốc (scale); tự cắt theo mặt nếu mặt quá nhỏ trong ảnh (dưới ~44% chiều cao), hoặc nền không đơn sắc, hoặc bạn bật cắt mặt.
             - **Ghép nền xanh**: khi bật rembg, nếu khung đầu ra **đã có phông một màu** thì **không** ghép thêm (trừ khi bạn bật “luôn ghép”).
             """
         )
@@ -609,7 +609,10 @@ def main() -> None:
         prefer_face_crop = st.toggle(
             "Cắt theo khuôn mặt (chuẩn chân dung)",
             value=False,
-            help="Tắt: giữ khung gốc, chỉ scale về khung chuẩn — trừ khi nền không đơn sắc (tự cắt theo mặt). Bật: luôn crop theo mặt.",
+            help=(
+                "Tắt: giữ khung gốc và chỉ scale — trừ khi nền không đơn sắc hoặc mặt quá nhỏ trong ảnh "
+                "(dưới ~44% chiều cao), lúc đó sẽ tự crop để chủ thể lấp khung hơn. Bật: luôn crop theo mặt."
+            ),
         )
         replace_blue_bg = st.toggle(
             "Tự động ghép nền xanh",

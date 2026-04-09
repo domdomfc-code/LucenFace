@@ -1287,7 +1287,8 @@ def process_portrait_image(
     Pipeline backend:
     - Phát hiện khuôn mặt; nhiều ứng viên (nền/poster) → chọn một mặt chủ thể
     - Validation: vị trí, tỷ lệ, sáng/tương phản, nền
-    - Crop theo mặt chỉ khi: prefer_face_crop hoặc nền không đơn sắc; không thì scale toàn ảnh (cover).
+    - Crop theo mặt khi: prefer_face_crop, hoặc nền không đơn sắc, hoặc mặt quá nhỏ trong khung gốc
+      (<~44% chiều cao — không đạt tỷ lệ ảnh thẻ); không thì scale toàn ảnh (cover).
     - Ảnh thiếu sáng: có thể tinh chỉnh bbox crop bằng MediaPipe Selfie Segmentation (tóc/vai).
     - Chỉnh sáng nhẹ (CLAHE + trộn Y) khi cần
     - `replace_background`: True → rembg + nền xanh; False → chỉ crop/scale theo tỷ lệ, giữ nền gốc.
@@ -1461,7 +1462,7 @@ def process_portrait_image(
     if not ok_center:
         warnings.append(msg_center)
 
-    ok_ratio, msg_ratio, _ = _face_area_ratio_check((fx1, fy1, fx2, fy2), w0, h0)
+    ok_ratio, msg_ratio, fh_rel = _face_area_ratio_check((fx1, fy1, fx2, fy2), w0, h0)
     checks["Tỷ lệ khuôn mặt"] = CheckResult(ok_ratio, msg_ratio)
     if not ok_ratio:
         warnings.append(msg_ratio)
@@ -1477,18 +1478,28 @@ def process_portrait_image(
     if not ok_bg:
         warnings.append(msg_bg)
 
-    should_face_crop = bool(prefer_face_crop) or (not ok_bg)
+    # Mặt quá nhỏ trong ảnh gốc (vd. chụp màn hình, người xa) → tự crop theo mặt để chủ thể lấp khung đầu ra.
+    needs_tighter_framing = fh_rel < 0.44
+    should_face_crop = bool(prefer_face_crop) or (not ok_bg) or needs_tighter_framing
     # Ảnh thiếu sáng: bbox mặt có thể nhỏ/lệch → thêm padding + headroom trên crop
     pad_scale = 1.0 + (1.0 - min(brightness, 108.0) / 108.0) * 0.17
     if brightness >= 108:
         pad_scale = 1.0
     headroom_crop = 0.28 if brightness >= 100 else 0.32
+    target_face_h = 0.57 if needs_tighter_framing else 0.50
 
     if should_face_crop:
-        checks["Khung ảnh"] = CheckResult(
-            True,
-            "Cắt theo khuôn mặt (bạn bật hoặc nền không đơn sắc).",
-        )
+        if prefer_face_crop:
+            frame_msg = "Cắt theo khuôn mặt (bạn đã bật)."
+        elif not ok_bg:
+            frame_msg = "Cắt theo khuôn mặt (nền không đơn sắc)."
+        elif needs_tighter_framing:
+            frame_msg = (
+                "Tự động cắt/phóng theo mặt — mặt quá nhỏ trong ảnh gốc để đạt tỷ lệ chân dung."
+            )
+        else:
+            frame_msg = "Cắt theo khuôn mặt."
+        checks["Khung ảnh"] = CheckResult(True, frame_msg)
         aspect = 3 / 4 if ratio == "3x4" else 2 / 3
         crop_face = _expand_face_bbox_for_portrait(
             (fx1, fy1, fx2, fy2), w0, h0, pad_scale=pad_scale
@@ -1503,7 +1514,12 @@ def process_portrait_image(
                 _selfie_segmentation,
             )
         crop_rect = _compute_crop_rect(
-            w0, h0, crop_face, aspect=aspect, headroom_frac=headroom_crop
+            w0,
+            h0,
+            crop_face,
+            aspect=aspect,
+            target_face_height_frac=target_face_h,
+            headroom_frac=headroom_crop,
         )
         cropped = _safe_crop_with_pad(bgr0, crop_rect)
     else:
