@@ -1387,14 +1387,17 @@ def process_portrait_image(
         return ProcessResult(status="FAILED", errors=errors, warnings=warnings, checks=checks, processed_image=None)
 
     if auto_orient and rot_label is not None and rot_score > 0:
-        # Chỉ cảnh báo khi xoay giúp “mặt đứng” tốt hơn rõ rệt; tránh báo nhầm.
-        should_warn = (id_score < 0) or (rot_score >= max(id_score * 1.18, id_score + 0.030))
-        if should_warn:
+        # Nếu xoay giúp “mặt đứng” tốt hơn rõ rệt: coi ảnh không hợp lệ (ảnh đang nằm ngang/lật ngược).
+        should_fail = (id_score < 0) or (rot_score >= max(id_score * 1.18, id_score + 0.030))
+        if should_fail:
+            errors.append(
+                f"Ảnh không hợp lệ: có dấu hiệu bị xoay ({rot_label}). Vui lòng upload ảnh khác (đúng hướng)."
+            )
             checks["Định hướng ảnh"] = CheckResult(
                 False,
-                f"Nghi ảnh bị xoay — nếu {rot_label} thì checklist/mặt sẽ phù hợp hơn. Output vẫn giữ hướng gốc.",
+                f"Ảnh bị xoay ({rot_label}) — không chấp nhận. Hãy upload ảnh khác.",
             )
-            warnings.append(f"Gợi ý: {rot_label} trước khi upload để tránh sai checklist.")
+            return ProcessResult(status="FAILED", errors=errors, warnings=warnings, checks=checks, processed_image=None)
         else:
             checks["Định hướng ảnh"] = CheckResult(True, orient_msg)
     else:
