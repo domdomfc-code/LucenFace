@@ -1388,7 +1388,23 @@ def process_portrait_image(
 
     if auto_orient and rot_label is not None and rot_score > 0:
         # Nếu xoay giúp “mặt đứng” tốt hơn rõ rệt: coi ảnh không hợp lệ (ảnh đang nằm ngang/lật ngược).
+        #
+        # Lưu ý: có trường hợp ảnh xoay 90° nhưng vẫn detect được mặt ở hướng gốc → `rot_score` không luôn
+        # vượt ngưỡng; thêm heuristic dựa trên tỷ lệ bbox (mặt bị “nằm ngang”).
         should_fail = (id_score < 0) or (rot_score >= max(id_score * 1.18, id_score + 0.030))
+        try:
+            if faces and rot_faces:
+                fx1, fy1, fx2, fy2, _ = _primary_face_box_largest(faces)
+                rfx1, rfy1, rfx2, rfy2, _ = _primary_face_box_largest(rot_faces)
+                ar_id = float(fy2 - fy1) / float(max(1, fx2 - fx1))
+                ar_rot = float(rfy2 - rfy1) / float(max(1, rfx2 - rfx1))
+                h_id = float(fy2 - fy1) / float(max(1, bgr0.shape[0]))
+                # Chỉ áp dụng heuristic khi xoay 90° (xoay ngang) và mặt ở hướng gốc khá “nằm”.
+                if ("90°" in rot_label) and (ar_id < 0.70) and (ar_rot >= 0.82) and (h_id >= 0.06):
+                    should_fail = True
+        except Exception:
+            pass
+
         if should_fail:
             errors.append(
                 f"Ảnh không hợp lệ: có dấu hiệu bị xoay ({rot_label}). Vui lòng upload ảnh khác (đúng hướng)."
