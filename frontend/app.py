@@ -220,7 +220,7 @@ def _cv2_troubleshoot_markdown() -> str:
 
 APP_TITLE = "Chuẩn hóa ảnh chân dung học sinh"
 # Đổi số khi deploy để kiểm tra Streamlit Cloud đã build bản mới (sidebar hiển thị).
-APP_BUILD = "3.10.5-fix-collapsed-sidebar-layout"
+APP_BUILD = "3.11.0-upload-hero-dark-centered"
 BLUE = "#005BC4"
 BG = "#F6F9FF"
 
@@ -393,24 +393,114 @@ def _inject_css() -> None:
             color: var(--muted);
           }}
 
-          [data-testid="stFileUploader"] {{
-            background: transparent;
-            border: none;
+          /* Một vùng upload chính — giao diện hero tối, căn giữa (theo mẫu “Chọn ảnh”). */
+          section.main [data-testid="stFileUploader"] {{
+            margin-top: 0 !important;
           }}
-          [data-testid="stFileUploader"] > div {{
-            border: 2px dashed rgba(0, 91, 196, 0.35);
-            background: rgba(255,255,255,0.80);
-            border-radius: 18px;
-            padding: 18px 16px;
-            box-shadow: var(--shadow);
+          section.main [data-testid="stFileUploader"] > div {{
+            background: #1e1e24 !important;
+            border: 1px solid rgba(255, 255, 255, 0.08) !important;
+            border-top: 1px dashed rgba(255, 255, 255, 0.18) !important;
+            border-radius: 0 !important;
+            padding: 1.1rem 1.25rem 1.15rem !important;
+            box-shadow: none !important;
           }}
-          [data-testid="stFileUploader"] label {{
+          section.main [data-testid="stFileUploader"] label {{
+            color: rgba(255, 255, 255, 0.88) !important;
+            font-weight: 700 !important;
+          }}
+          section.main [data-testid="stFileUploader"] span[class*="uploadedFile"] {{
+            color: rgba(255, 255, 255, 0.9) !important;
+          }}
+          section.main [data-testid="stFileUploader"] small {{
+            color: rgba(255, 255, 255, 0.5) !important;
+            font-weight: 600 !important;
+          }}
+          section.main [data-testid="stFileUploader"] [data-testid="stMarkdownContainer"] p,
+          section.main [data-testid="stFileUploader"] [data-testid="stCaption"] {{
+            color: rgba(255, 255, 255, 0.62) !important;
+          }}
+          section.main [data-testid="stFileUploader"] button {{
+            background: var(--blue) !important;
+            color: #fff !important;
+            border: none !important;
+            border-radius: 9999px !important;
+            font-weight: 800 !important;
+            padding: 0.55rem 1.35rem !important;
+            box-shadow: 0 8px 22px rgba(0, 91, 196, 0.35) !important;
+          }}
+          section.main [data-testid="stFileUploader"] button::before {{
+            content: "+ ";
             font-weight: 900;
-            color: var(--text);
+            margin-right: 0.15rem;
           }}
-          [data-testid="stFileUploader"] small {{
-            color: var(--muted);
+          section.main [data-testid="stFileUploader"] button:hover {{
+            filter: brightness(1.08);
+          }}
+
+          .p2c-upload-hero-top {{
+            text-align: center;
+            background: #1e1e24;
+            color: rgba(255, 255, 255, 0.92);
+            border-radius: 16px 16px 0 0;
+            padding: 2rem 1.5rem 1.15rem;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-bottom: none;
+            margin-bottom: 0;
+          }}
+          .p2c-upload-hero-top .p2c-upload-icon {{
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 64px;
+            height: 64px;
+            border-radius: 16px;
+            background: #374151;
+            margin-bottom: 1rem;
+          }}
+          .p2c-upload-hero-top .p2c-upload-tagline {{
+            margin: 0;
+            font-size: 0.98rem;
+            line-height: 1.55;
+            color: rgba(255, 255, 255, 0.72);
             font-weight: 600;
+            max-width: 28rem;
+            margin-left: auto;
+            margin-right: auto;
+          }}
+          .p2c-upload-paste-zone {{
+            background: #1e1e24;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-top: 1px dashed rgba(255, 255, 255, 0.14);
+            border-bottom: none;
+            border-radius: 0;
+            padding: 0.75rem 1rem 0.35rem;
+            margin-top: -1px;
+            text-align: center;
+          }}
+          section.main [data-testid="column"]:has(.p2c-upload-hero-top) iframe {{
+            border-radius: 0 0 16px 16px !important;
+          }}
+          section.main [data-testid="column"]:has(.p2c-upload-hero-top) [data-testid="stIFrame"] {{
+            margin-bottom: 0.25rem;
+          }}
+          .p2c-upload-paste-zone p {{
+            margin: 0 0 0.5rem 0;
+            font-size: 0.88rem;
+            line-height: 1.45;
+            color: rgba(255, 255, 255, 0.55);
+            font-weight: 600;
+          }}
+          .p2c-upload-empty {{
+            text-align: center;
+            padding: 0.85rem 1rem;
+            margin-top: 0.75rem;
+            border-radius: 12px;
+            background: rgba(0, 91, 196, 0.12);
+            color: #0f172a;
+            font-weight: 700;
+            font-size: 0.92rem;
+            border: 1px solid rgba(0, 91, 196, 0.2);
           }}
 
           .stButton > button {{
@@ -695,31 +785,59 @@ def main() -> None:
     else:
         blue_rgb = tuple(int(BLUE.lstrip("#")[i : i + 2], 16) for i in (0, 2, 4))
 
-    st.markdown("### Kéo & thả ảnh / Dán từ clipboard")
-    st.markdown(
-        '<div class="card-soft muted">Mẹo: ảnh rõ mặt, thẳng góc. Bật/tắt ghép nền xanh trong sidebar trước khi xử lý. Cắt theo mặt khi bạn bật hoặc nền không đơn sắc. '
-        "Có thể <strong>dán ảnh</strong>: copy ảnh hoặc chụp màn hình, rồi <strong>Ctrl+V / ⌘+V</strong> bất kỳ đâu trên trang (trừ khi đang gõ trong ô chữ).</div>",
-        unsafe_allow_html=True,
-    )
-    uploads = st.file_uploader(
-        "Kéo và thả tệp vào đây hoặc bấm để chọn",
-        type=["jpg", "jpeg", "png"],
-        accept_multiple_files=True,
-    )
     st.caption(
-        "**Dán ảnh:** **Ctrl+V** / **⌘+V** ở bất kỳ đâu trên trang (không cần nhấp ô) — không áp dụng khi focus đang ở ô nhập chữ/sidebar text. "
-        "Hoặc bấm **đọc clipboard** trong khung component. Ảnh được nén trước khi gửi."
+        "Mẹo: ảnh rõ mặt, thẳng góc — tùy chọn ghép nền xanh và rembg nằm trong **sidebar** (☰)."
     )
-    nonce = int(st.session_state.get("p2c_clipboard_paste_nonce", 0))
-    pasted_data_url = paste_image_from_clipboard(
-        enable_global_paste=enable_global_paste,
-        key=f"p2c_clipboard_paste_{nonce}",
-    )
+    _g_left, _g_mid, _g_right = st.columns([1, 2.35, 1])
+    with _g_mid:
+        st.markdown(
+            """
+<div class="p2c-upload-hero-top">
+  <div class="p2c-upload-icon" aria-hidden="true">
+    <svg width="38" height="38" viewBox="0 0 56 56" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect x="6" y="10" width="44" height="36" rx="6" fill="#4b5563"/>
+      <path d="M12 38 L22 26 L30 34 L38 22 L44 28 V38 H12 Z" fill="#9ca3af"/>
+      <circle cx="40" cy="18" r="5" fill="#d1d5db"/>
+    </svg>
+  </div>
+  <p class="p2c-upload-tagline">Kéo hình ảnh của bạn bất cứ nơi nào trên trang này hoặc nhấn
+    <strong style="color:rgba(255,255,255,0.95)">Ctrl</strong> /
+    <strong style="color:rgba(255,255,255,0.95)">⌘</strong> +
+    <strong style="color:rgba(255,255,255,0.95)">V</strong> để dán hình ảnh.</p>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+        uploads = st.file_uploader(
+            "Chọn ảnh",
+            type=["jpg", "jpeg", "png"],
+            accept_multiple_files=True,
+            help="JPG, PNG — tối đa ~20MB mỗi file; tối đa 50 ảnh mỗi lần.",
+            label_visibility="collapsed",
+        )
+        st.markdown(
+            """
+<div class="p2c-upload-paste-zone">
+<p><strong style="color:rgba(255,255,255,0.82)">Ctrl+V</strong> /
+<strong style="color:rgba(255,255,255,0.82)">⌘+V</strong> bất kỳ đâu để dán — hoặc nút đọc clipboard bên dưới.</p>
+<p style="font-size:0.8rem;color:rgba(255,255,255,0.42);margin:0">Không chặn khi đang gõ trong ô chữ (sidebar / ô nhập liệu).</p>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+        nonce = int(st.session_state.get("p2c_clipboard_paste_nonce", 0))
+        pasted_data_url = paste_image_from_clipboard(
+            enable_global_paste=enable_global_paste,
+            key=f"p2c_clipboard_paste_{nonce}",
+        )
 
-    upload_list = list(uploads) if uploads else []
-    if not upload_list and not pasted_data_url:
-        st.info("Hãy **upload** ít nhất một ảnh, hoặc **dán** ảnh từ clipboard để bắt đầu.")
-        return
+        upload_list = list(uploads) if uploads else []
+        if not upload_list and not pasted_data_url:
+            st.markdown(
+                '<div class="p2c-upload-empty">Chưa có ảnh — hãy <strong>chọn tệp</strong> hoặc <strong>dán</strong> từ clipboard để bắt đầu.</div>',
+                unsafe_allow_html=True,
+            )
+            return
 
     # Stage bytes into session_state so previews don't re-read unpredictably across reruns.
     staged = _gather_staged_images(upload_list, pasted_data_url)
