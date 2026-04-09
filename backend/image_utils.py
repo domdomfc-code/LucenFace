@@ -1123,6 +1123,75 @@ def _primary_face_box_largest(
     return max(faces, key=lambda f: (f[2] - f[0]) * (f[3] - f[1]))
 
 
+def _map_box_from_rotated_to_original(
+    box_xyxy: Tuple[int, int, int, int],
+    rot_label: str,
+    w0: int,
+    h0: int,
+) -> Tuple[int, int, int, int]:
+    """
+    Map bbox từ ảnh đã xoay (cv2.rotate) về toạ độ ảnh gốc.
+
+    rot_label phải là một trong các label đã dùng trong `_select_bgr_orientation_for_portrait`.
+    """
+    x1, y1, x2, y2 = box_xyxy
+    corners = [(x1, y1), (x2, y1), (x2, y2), (x1, y2)]
+
+    def inv_map(pt: Tuple[int, int]) -> Tuple[int, int]:
+        xr, yr = pt
+        if "xoay 90° theo chiều kim đồng hồ" in rot_label:
+            # orig -> rot90cw: x' = h0-1-y, y' = x  => inv: x=y', y=h0-1-x'
+            return int(yr), int(h0 - 1 - xr)
+        if "xoay 90° ngược chiều kim đồng hồ" in rot_label:
+            # orig -> rot90ccw: x' = y, y' = w0-1-x => inv: x=w0-1-y', y=x'
+            return int(w0 - 1 - yr), int(xr)
+        # 180
+        return int(w0 - 1 - xr), int(h0 - 1 - yr)
+
+    mapped = [inv_map(c) for c in corners]
+    xs = [p[0] for p in mapped]
+    ys = [p[1] for p in mapped]
+    ox1 = int(_clamp(min(xs), 0, w0 - 1))
+    oy1 = int(_clamp(min(ys), 0, h0 - 1))
+    ox2 = int(_clamp(max(xs), ox1 + 1, w0))
+    oy2 = int(_clamp(max(ys), oy1 + 1, h0))
+    return ox1, oy1, ox2, oy2
+
+
+def _map_faces_from_rotated_to_original(
+    faces_rot: List[Tuple[int, int, int, int, float]],
+    rot_label: str,
+    w0: int,
+    h0: int,
+) -> List[Tuple[int, int, int, int, float]]:
+    out: List[Tuple[int, int, int, int, float]] = []
+    for x1, y1, x2, y2, s in faces_rot:
+        ox1, oy1, ox2, oy2 = _map_box_from_rotated_to_original((x1, y1, x2, y2), rot_label, w0=w0, h0=h0)
+        out.append((ox1, oy1, ox2, oy2, float(s)))
+    return out
+
+
+def _map_faces_from_flipped_to_original(
+    faces_flip: List[Tuple[int, int, int, int, float]],
+    *,
+    flip_code: int,
+    w0: int,
+    h0: int,
+) -> List[Tuple[int, int, int, int, float]]:
+    out: List[Tuple[int, int, int, int, float]] = []
+    for x1, y1, x2, y2, s in faces_flip:
+        if flip_code == 1:
+            # horizontal: x' = w0-1-x
+            ox1 = int(_clamp(w0 - x2, 0, w0 - 1))
+            ox2 = int(_clamp(w0 - x1, ox1 + 1, w0))
+            out.append((ox1, y1, ox2, y2, float(s)))
+        else:
+            oy1 = int(_clamp(h0 - y2, 0, h0 - 1))
+            oy2 = int(_clamp(h0 - y1, oy1 + 1, h0))
+            out.append((x1, oy1, x2, oy2, float(s)))
+    return out
+
+
 def _select_bgr_orientation_for_portrait(
     bgr0: np.ndarray,
     min_face_conf: float,
@@ -1257,8 +1326,9 @@ def process_portrait_image(
     rot_label: Optional[str] = None
     rot_faces: List[Tuple[int, int, int, int, float]] = []
     rot_score = -1.0
+    rot_n = 0
     if auto_orient:
-        _bgr_best, rot_label, rot_faces, _rot_n = _select_bgr_orientation_for_portrait(
+        _bgr_best, rot_label, rot_faces, rot_n = _select_bgr_orientation_for_portrait(
             bgr0, min_face_conf, _mp_face_detector
         )
         if rot_label is not None and rot_faces:
@@ -1266,17 +1336,19 @@ def process_portrait_image(
 
     if len(faces) == 0:
         if auto_orient:
-            # Nếu chỉ xoay mới thấy mặt: báo rõ hướng cần xoay (output vẫn không tạo được vì không thấy mặt ở ảnh gốc).
+            # Nếu chỉ xoay mới thấy mặt: vẫn tiếp tục pipeline, nhưng dùng bbox đã map về ảnh gốc.
             if rot_label is not None and rot_faces:
-                errors.append("Không tìm thấy khuôn mặt trong ảnh theo hướng hiện tại.")
+                h0, w0 = bgr0.shape[:2]
+                faces = _map_faces_from_rotated_to_original(rot_faces, rot_label, w0=w0, h0=h0)
+                n_face_candidates = max(n_face_candidates, int(rot_n or len(rot_faces)))
+                warnings.append(
+                    f"Ảnh có vẻ bị xoay — phát hiện mặt bằng cách {rot_label} (output vẫn giữ hướng gốc)."
+                )
                 checks["Định hướng ảnh"] = CheckResult(
                     False,
-                    f"Ảnh có vẻ bị xoay — nếu {rot_label} thì mới phát hiện được khuôn mặt. Hãy upload ảnh khác (đúng hướng).",
+                    f"Ảnh có vẻ bị xoay ({rot_label}). Output giữ nguyên hướng gốc; nên xoay đúng hướng trước khi upload.",
                 )
-                checks["Khuôn mặt"] = CheckResult(False, "Không phát hiện được khuôn mặt.")
-                return ProcessResult(status="FAILED", errors=errors, warnings=warnings, checks=checks, processed_image=None)
-
-            # Nếu chỉ lật mới thấy mặt: ảnh bị lật → fail sớm.
+            # Nếu chỉ lật mới thấy mặt: vẫn tiếp tục pipeline, nhưng đánh dấu không đạt.
             b_h = cv2.flip(bgr0, 1)
             b_v = cv2.flip(bgr0, 0)
             fh, _ = _detect_faces_bgr_with_boost(b_h, min_face_conf, _mp_face_detector)
@@ -1288,21 +1360,19 @@ def process_portrait_image(
                     kind = "lật ngang (ảnh gương)"
                 else:
                     kind = "lật dọc (ngược chiều dọc)"
-                errors.append(
-                    "Ảnh không hợp lệ: có dấu hiệu "
-                    + kind
-                    + ". Vui lòng tải lên ảnh khác, đúng hướng chụp (không gương, không lật)."
+                h0, w0 = bgr0.shape[:2]
+                if len(fh) > 0:
+                    faces = _map_faces_from_flipped_to_original(fh, flip_code=1, w0=w0, h0=h0)
+                    n_face_candidates = max(n_face_candidates, len(fh))
+                else:
+                    faces = _map_faces_from_flipped_to_original(fv, flip_code=0, w0=w0, h0=h0)
+                    n_face_candidates = max(n_face_candidates, len(fv))
+                warnings.append(
+                    "Ảnh có vẻ bị lật — đã dùng hướng lật để phát hiện mặt (output vẫn giữ hướng gốc)."
                 )
                 checks["Định hướng ảnh"] = CheckResult(
                     False,
-                    "Ảnh bị lật ngang hoặc lật ngược — không chấp nhận. Hãy upload ảnh khác.",
-                )
-                checks["Khuôn mặt"] = CheckResult(
-                    False,
-                    "Chỉ phát hiện được mặt khi lật ảnh; cần file gốc đúng hướng.",
-                )
-                return ProcessResult(
-                    status="FAILED", errors=errors, warnings=warnings, checks=checks, processed_image=None
+                    f"Ảnh có vẻ bị lật ({kind}). Output giữ nguyên hướng gốc; nên dùng ảnh đúng hướng.",
                 )
 
     if len(faces) == 0:

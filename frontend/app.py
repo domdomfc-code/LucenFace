@@ -220,7 +220,7 @@ def _cv2_troubleshoot_markdown() -> str:
 
 APP_TITLE = "Chuẩn hóa ảnh chân dung học sinh"
 # Đổi số khi deploy để kiểm tra Streamlit Cloud đã build bản mới (sidebar hiển thị).
-APP_BUILD = "3.9.5-orient-check-only-no-rotate-output"
+APP_BUILD = "3.9.6-orient-check-rotate-for-detection-only"
 BLUE = "#005BC4"
 BG = "#F6F9FF"
 
