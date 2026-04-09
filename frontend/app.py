@@ -824,7 +824,7 @@ def main() -> None:
 
     # Filter selected items + basic validation limits
     MAX_BYTES = 12 * 1024 * 1024  # ~12MB per image staged (post-clipboard compression typically smaller)
-    MIN_W, MIN_H = 300, 400
+    # Không chặn ảnh nhỏ: một số ảnh crop/scan vẫn dùng được; checklist sẽ tự đánh giá thêm.
     work_items: List[Tuple[str, bytes]] = []
     rejected: List[Tuple[str, str]] = []
     for i, (fname, raw) in enumerate(staged):
@@ -844,9 +844,7 @@ def main() -> None:
         try:
             im = Image.open(io.BytesIO(raw))
             w, h = im.size
-            if w < MIN_W or h < MIN_H:
-                rejected.append((fname_norm, f"Ảnh quá nhỏ ({w}×{h}) — tối thiểu {MIN_W}×{MIN_H}."))
-                continue
+            # Không reject theo kích thước; nếu quá nhỏ, face detection/checklist có thể FAIL sau.
             mode = (im.mode or "").upper()
             if mode in ("CMYK", "I;16", "I;16B", "I;16L", "I;16S", "I"):
                 # Vẫn xử lý được khi convert RGB, nhưng cảnh báo sớm để tránh màu sai.
