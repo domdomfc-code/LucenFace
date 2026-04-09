@@ -220,7 +220,7 @@ def _cv2_troubleshoot_markdown() -> str:
 
 APP_TITLE = "Chuẩn hóa ảnh chân dung học sinh"
 # Đổi số khi deploy để kiểm tra Streamlit Cloud đã build bản mới (sidebar hiển thị).
-APP_BUILD = "3.11.1-upload-tagline-single-line"
+APP_BUILD = "3.11.2-remove-paste-hint-strip"
 BLUE = "#005BC4"
 BG = "#F6F9FF"
 
@@ -401,6 +401,7 @@ def _inject_css() -> None:
             background: #1e1e24 !important;
             border: 1px solid rgba(255, 255, 255, 0.08) !important;
             border-top: 1px dashed rgba(255, 255, 255, 0.18) !important;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
             border-radius: 0 !important;
             padding: 1.1rem 1.25rem 1.15rem !important;
             box-shadow: none !important;
@@ -477,28 +478,11 @@ def _inject_css() -> None:
             white-space: nowrap;
             max-width: none;
           }}
-          .p2c-upload-paste-zone {{
-            background: #1e1e24;
-            border: 1px solid rgba(255, 255, 255, 0.08);
-            border-top: 1px dashed rgba(255, 255, 255, 0.14);
-            border-bottom: none;
-            border-radius: 0;
-            padding: 0.75rem 1rem 0.35rem;
-            margin-top: -1px;
-            text-align: center;
-          }}
           section.main [data-testid="column"]:has(.p2c-upload-hero-top) iframe {{
             border-radius: 0 0 16px 16px !important;
           }}
           section.main [data-testid="column"]:has(.p2c-upload-hero-top) [data-testid="stIFrame"] {{
             margin-bottom: 0.25rem;
-          }}
-          .p2c-upload-paste-zone p {{
-            margin: 0 0 0.5rem 0;
-            font-size: 0.88rem;
-            line-height: 1.45;
-            color: rgba(255, 255, 255, 0.55);
-            font-weight: 600;
           }}
           .p2c-upload-empty {{
             text-align: center;
@@ -820,16 +804,6 @@ def main() -> None:
             accept_multiple_files=True,
             help="JPG, PNG — tối đa ~20MB mỗi file; tối đa 50 ảnh mỗi lần.",
             label_visibility="collapsed",
-        )
-        st.markdown(
-            """
-<div class="p2c-upload-paste-zone">
-<p><strong style="color:rgba(255,255,255,0.82)">Ctrl+V</strong> /
-<strong style="color:rgba(255,255,255,0.82)">⌘+V</strong> bất kỳ đâu để dán — hoặc nút đọc clipboard bên dưới.</p>
-<p style="font-size:0.8rem;color:rgba(255,255,255,0.42);margin:0">Không chặn khi đang gõ trong ô chữ (sidebar / ô nhập liệu).</p>
-</div>
-""",
-            unsafe_allow_html=True,
         )
         nonce = int(st.session_state.get("p2c_clipboard_paste_nonce", 0))
         pasted_data_url = paste_image_from_clipboard(
