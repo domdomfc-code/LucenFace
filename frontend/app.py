@@ -220,7 +220,7 @@ def _cv2_troubleshoot_markdown() -> str:
 
 APP_TITLE = "Chuẩn hóa ảnh chân dung học sinh"
 # Đổi số khi deploy để kiểm tra Streamlit Cloud đã build bản mới (sidebar hiển thị).
-APP_BUILD = "3.11.5-no-sidebar-autoreopen"
+APP_BUILD = "3.11.6-sidebar-expand-on-each-visit"
 BLUE = "#005BC4"
 BG = "#F6F9FF"
 
@@ -512,7 +512,7 @@ def _inject_css() -> None:
 
 
 def _sidebar_reopen_button() -> None:
-    """Nút ☰ góc trái: mở lại sidebar khi đã thu nhỏ (chỉ khi bấm; không dùng setInterval — tránh bấm nhầm menu header/Share)."""
+    """Nút ☰ + mở sidebar khi vừa tải trang (Streamlit nhớ thu gọn trong localStorage, bỏ qua initial_sidebar_state)."""
     html = """
 <!DOCTYPE html><html><head><meta charset="utf-8"></head>
 <body style="margin:0;padding:0;background:transparent;">
@@ -532,6 +532,25 @@ def _sidebar_reopen_button() -> None:
   ☰
 </button>
 </div>
+<script>
+(function () {
+  const w = window.parent;
+  if (w.__p2cSidebarExpandOnLoadScheduled) return;
+  w.__p2cSidebarExpandOnLoadScheduled = true;
+  const expandIfCollapsed = () => {
+    try {
+      const d = w.document;
+      const side = d.querySelector('section[data-testid="stSidebar"]');
+      if (!side) return;
+      if (side.getBoundingClientRect().width >= 64) return;
+      const q = (s) => d.querySelector(s);
+      (q('[data-testid="collapsedControl"]')
+        || q('[data-testid="stSidebarCollapsedControl"]'))?.click();
+    } catch (e) {}
+  };
+  [0, 350, 900, 1800].forEach((ms) => setTimeout(expandIfCollapsed, ms));
+})();
+</script>
 </body></html>
 """
     iframe = getattr(st, "iframe", None)
