@@ -220,7 +220,7 @@ def _cv2_troubleshoot_markdown() -> str:
 
 APP_TITLE = "Chuẩn hóa ảnh chân dung học sinh"
 # Đổi số khi deploy để kiểm tra Streamlit Cloud đã build bản mới (sidebar hiển thị).
-APP_BUILD = "3.11.4-sidebar-always-open"
+APP_BUILD = "3.11.5-no-sidebar-autoreopen"
 BLUE = "#005BC4"
 BG = "#F6F9FF"
 
@@ -512,7 +512,7 @@ def _inject_css() -> None:
 
 
 def _sidebar_reopen_button() -> None:
-    """Nút ☰ góc trái + tự mở lại sidebar khi bị thu gọn (giữ sidebar luôn mở)."""
+    """Nút ☰ góc trái: mở lại sidebar khi đã thu nhỏ (chỉ khi bấm; không dùng setInterval — tránh bấm nhầm menu header/Share)."""
     html = """
 <!DOCTYPE html><html><head><meta charset="utf-8"></head>
 <body style="margin:0;padding:0;background:transparent;">
@@ -523,9 +523,7 @@ def _sidebar_reopen_button() -> None:
       const d = window.parent.document;
       const q = (s) => d.querySelector(s);
       (q('[data-testid="collapsedControl"]')
-        || q('[data-testid="stSidebarCollapsedControl"]')
-        || q('button[data-testid="baseButton-header"]')
-        || q('header button[kind="header"]'))?.click();
+        || q('[data-testid="stSidebarCollapsedControl"]'))?.click();
     } catch (e) {}
   })()"
   style="font-size:1.05rem;line-height:1;padding:0.45rem 0.55rem;border-radius:10px;
@@ -534,23 +532,6 @@ def _sidebar_reopen_button() -> None:
   ☰
 </button>
 </div>
-<script>
-(function () {
-  const openIfCollapsed = () => {
-    try {
-      const d = window.parent.document;
-      const side = d.querySelector('section[data-testid="stSidebar"]');
-      if (!side || side.getBoundingClientRect().width >= 8) return;
-      const q = (s) => d.querySelector(s);
-      (q('[data-testid="collapsedControl"]')
-        || q('[data-testid="stSidebarCollapsedControl"]')
-        || q('button[data-testid="baseButton-header"]')
-        || q('header button[kind="header"]'))?.click();
-    } catch (e) {}
-  };
-  setInterval(openIfCollapsed, 600);
-})();
-</script>
 </body></html>
 """
     iframe = getattr(st, "iframe", None)
