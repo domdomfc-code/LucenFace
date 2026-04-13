@@ -626,17 +626,18 @@ def _expand_face_bbox_for_portrait(
 
 
 def _compute_crop_rect_ideal(
-    img_w: int,
-    img_h: int,
+    _img_w: int,
+    _img_h: int,
     face_xyxy: Tuple[int, int, int, int],
     aspect: float,
     target_face_height_frac: float = 0.50,
-    headroom_frac: float = 0.28,
     anchor_xy: Optional[Tuple[float, float]] = None,
 ) -> Tuple[float, float, float, float]:
     """
-    Khung cắt đúng tỷ lệ `aspect`, kích thước theo chiều cao vùng mặt đã mở rộng,
-    căn theo anchor (mặc định: tâm bbox mở rộng). Có thể tràn ngoài ảnh — dùng letterbox sau.
+    Khung cắt đúng tỷ lệ `aspect`, kích thước theo chiều cao vùng mặt đã mở rộng.
+    Đặt điểm anchor (mũi hoặc tâm bbox) đúng **trung tâm hình học** khung (50%, 50%)
+    để cân đối trên/dưới — tránh công thức headroom cũ đẩy mũi lên ~22% khung và cắt mất đỉnh đầu.
+    Có thể tràn ngoài ảnh — dùng letterbox sau.
     """
     fx1, fy1, fx2, fy2 = face_xyxy
     face_h = max(1, fy2 - fy1)
@@ -649,8 +650,8 @@ def _compute_crop_rect_ideal(
     crop_h = int(face_h / _clamp(target_face_height_frac, 0.45, 0.75))
     crop_w = int(crop_h * aspect)
 
-    desired_top = acy - (0.5 - headroom_frac) * crop_h
-    desired_left = acx - crop_w / 2.0
+    desired_top = acy - 0.5 * float(crop_h)
+    desired_left = acx - 0.5 * float(crop_w)
 
     x1 = float(desired_left)
     y1 = float(desired_top)
@@ -665,14 +666,13 @@ def _compute_crop_rect(
     face_xyxy: Tuple[int, int, int, int],
     aspect: float,
     target_face_height_frac: float = 0.50,
-    headroom_frac: float = 0.28,
     anchor_xy: Optional[Tuple[float, float]] = None,
 ) -> Tuple[int, int, int, int]:
     """
     Crop chữ nhật (x1,y1,x2,y2) trong ảnh — dịch khung nếu tràn biên (có thể lệch tâm so với anchor).
     """
     x1f, y1f, x2f, y2f = _compute_crop_rect_ideal(
-        img_w, img_h, face_xyxy, aspect, target_face_height_frac, headroom_frac, anchor_xy
+        img_w, img_h, face_xyxy, aspect, target_face_height_frac, anchor_xy
     )
     x1, y1, x2, y2 = int(round(x1f)), int(round(y1f)), int(round(x2f)), int(round(y2f))
 
@@ -1668,7 +1668,6 @@ def process_portrait_image(
     pad_scale = 1.0 + (1.0 - min(brightness, 108.0) / 108.0) * 0.17
     if brightness >= 108:
         pad_scale = 1.0
-    headroom_crop = 0.28 if brightness >= 100 else 0.32
     target_face_h = 0.57 if needs_tighter_framing else 0.50
 
     if should_face_crop:
@@ -1705,7 +1704,6 @@ def process_portrait_image(
             crop_face,
             aspect=aspect,
             target_face_height_frac=target_face_h,
-            headroom_frac=headroom_crop,
             anchor_xy=(anchor_x, anchor_y),
         )
         oob = ideal[0] < 0 or ideal[1] < 0 or ideal[2] > w0 or ideal[3] > h0
@@ -1729,7 +1727,6 @@ def process_portrait_image(
                 crop_face,
                 aspect=aspect,
                 target_face_height_frac=target_face_h,
-                headroom_frac=headroom_crop,
                 anchor_xy=(anchor_x, anchor_y),
             )
             cropped = _safe_crop_with_pad(bgr0, crop_rect)
