@@ -1244,6 +1244,7 @@ class PortraitProcessor:
         auto_orient: bool = True,
         crop_center_mode: str = "nose",
         letterbox_smart_framing: bool = True,
+        check_only: bool = False,
     ) -> ProcessResult:
         return process_portrait_image(
             pil_img,
@@ -1256,6 +1257,7 @@ class PortraitProcessor:
             auto_orient=auto_orient,
             crop_center_mode=crop_center_mode,
             letterbox_smart_framing=letterbox_smart_framing,
+            check_only=check_only,
             _mp_face_detector=self._fd,
             _rembg_session=self._rembg_session,
             _selfie_segmentation=self._selfie,
@@ -1447,6 +1449,7 @@ def process_portrait_image(
     auto_orient: bool = True,
     crop_center_mode: str = "nose",
     letterbox_smart_framing: bool = True,
+    check_only: bool = False,
     _mp_face_detector: Any | None = None,
     _rembg_session: Any | None = None,
     _selfie_segmentation: Any | None = None,
@@ -1467,6 +1470,8 @@ def process_portrait_image(
       \"face\" — tâm bbox mặt như trước.
     - `letterbox_smart_framing`: khi khung crop lý tưởng tràn ngoài ảnh, hoặc ảnh quá nhỏ/rất lớn,
       lấp viền bằng màu góc thay vì dịch crop (giữ tâm & tỷ lệ chủ thể).
+    - `check_only`: True → chỉ chạy phát hiện/đánh giá + mô phỏng khung đầu ra, **không** gọi rembg/remove.bg,
+      `processed_image` = None (tiết kiệm API & bộ nhớ).
     - Khi `replace_background` và `skip_rembg_if_uniform_background`: nếu viền khung đầu ra gần một màu
       (tiêu chuẩn phông), bỏ qua rembg và giữ nền gốc.
     - `_rembg_engine`: `"local"` (rembg + ONNX), `"remove_bg_api"` (API remove.bg), `"none"` (không tải model).
@@ -1757,6 +1762,40 @@ def process_portrait_image(
 
     ok_bg_final, msg_bg_final = _background_uniformity_check(out_bgr, standard_wording=True)
     checks["Phông nền (khung đầu ra)"] = CheckResult(ok_bg_final, msg_bg_final)
+
+    if check_only:
+        if not replace_background:
+            checks["Thay nền xanh"] = CheckResult(
+                True,
+                "[Kiểm tra] Ghép nền đang tắt — bước xử lý chỉ crop/scale, giữ nền gốc.",
+            )
+        elif skip_rembg_if_uniform_background and ok_bg and ok_bg_final:
+            checks["Thay nền xanh"] = CheckResult(
+                True,
+                "[Kiểm tra] Dự kiến: không gọi rembg/API — phông đơn sắc ở ảnh gốc và khung đầu ra.",
+            )
+        elif skip_rembg_if_uniform_background and (ok_bg_final or ok_bg):
+            checks["Thay nền xanh"] = CheckResult(
+                True,
+                "[Kiểm tra] Dự kiến: không gọi rembg/API — phông đạt chuẩn một màu.",
+            )
+        elif _rembg_engine == "remove_bg_api":
+            checks["Thay nền xanh"] = CheckResult(
+                True,
+                "[Kiểm tra] Khi xử lý sẽ gọi **remove.bg API** (tính quota/phí).",
+            )
+        else:
+            checks["Thay nền xanh"] = CheckResult(
+                True,
+                f"[Kiểm tra] Khi xử lý sẽ chạy **rembg** (ONNX, model {_rembg_model}).",
+            )
+        return ProcessResult(
+            status="FAILED" if errors else "OK",
+            errors=errors,
+            warnings=warnings,
+            checks=checks,
+            processed_image=None,
+        )
 
     if not replace_background:
         checks["Thay nền xanh"] = CheckResult(
