@@ -14,16 +14,16 @@ $VenvPip = Join-Path $RepoRoot ".venv\Scripts\pip.exe"
 if (-not (Test-Path $VenvPython)) {
     Write-Host "Tao venv .venv ..."
     $used312 = $false
-    try {
-        & py -3.12 -c "import sys" 2>$null | Out-Null
+    $null = & py -3.12 -c "import sys" 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "Dung Python 3.12 (py -3.12) - on dinh hon 3.13/3.14 voi OpenCV/rembg."
+        & py -3.12 -m venv .venv
         if ($LASTEXITCODE -eq 0) {
-            Write-Host "Dung Python 3.12 (py -3.12) — on dinh hon 3.13/3.14 voi OpenCV/rembg."
-            py -3.12 -m venv .venv
             $used312 = $true
         }
-    } catch { }
+    }
     if (-not $used312) {
-        Write-Host "Dung python trong PATH (goi cai Python 3.12 neu rembg/cv2 crash)."
+        Write-Host "Dung python trong PATH (cai Python 3.12 neu rembg/cv2 crash)."
         python -m venv .venv
     }
 }
