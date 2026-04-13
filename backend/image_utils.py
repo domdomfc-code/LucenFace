@@ -9,6 +9,10 @@ from typing import Any, Dict, List, Optional, Tuple
 _LETTERBOX_EXTREME_MIN_SHORT = 380
 _LETTERBOX_EXTREME_MAX_LONG = 5200
 
+# Crop chân dung: đảm bảo khung đủ rộng cho vai (tránh cắt vai khi zoom theo mặt)
+_CROP_MIN_EXPANDED_WIDTH_MULT = 1.06
+_CROP_MIN_WIDTH_VS_FACE_CORE = 1.42
+
 # OpenCV is required for processing; keep import optional so UI can still load
 # and show a friendly error instead of crashing at import-time.
 try:
@@ -673,7 +677,7 @@ def _expand_face_bbox_for_portrait(
     fh = max(1, y2 - y1)
     ps = float(_clamp(pad_scale, 1.0, 1.28))
     pad_top = int(0.38 * fh * ps)
-    pad_side = int(0.14 * fw * ps)
+    pad_side = int(0.20 * fw * ps)
     pad_bottom = int(0.12 * fh * ps)
     nx1 = x1 - pad_side
     ny1 = y1 - pad_top
@@ -693,15 +697,19 @@ def _compute_crop_rect_ideal(
     aspect: float,
     target_face_height_frac: float = 0.50,
     anchor_xy: Optional[Tuple[float, float]] = None,
+    core_face_xyxy: Optional[Tuple[int, int, int, int]] = None,
 ) -> Tuple[float, float, float, float]:
     """
     Khung cắt đúng tỷ lệ `aspect`, kích thước theo chiều cao vùng mặt đã mở rộng.
     Đặt điểm anchor (mũi hoặc tâm bbox) đúng **trung tâm hình học** khung (50%, 50%)
     để cân đối trên/dưới — tránh công thức headroom cũ đẩy mũi lên ~22% khung và cắt mất đỉnh đầu.
+    Nếu có `core_face_xyxy` (bbox mặt detector gốc): mở rộng chiều ngang tối thiểu theo vai
+    để tránh crop hẹp hơn vùng vai so với mức zoom theo mặt.
     Có thể tràn ngoài ảnh — dùng letterbox sau.
     """
     fx1, fy1, fx2, fy2 = face_xyxy
     face_h = max(1, fy2 - fy1)
+    ew = max(1, fx2 - fx1)
     if anchor_xy is not None:
         acx, acy = float(anchor_xy[0]), float(anchor_xy[1])
     else:
@@ -710,6 +718,15 @@ def _compute_crop_rect_ideal(
 
     crop_h = int(face_h / _clamp(target_face_height_frac, 0.45, 0.75))
     crop_w = int(crop_h * aspect)
+
+    min_w = float(ew) * _CROP_MIN_EXPANDED_WIDTH_MULT
+    if core_face_xyxy is not None:
+        cx1, cy1, cx2, cy2 = core_face_xyxy
+        core_w = max(1, cx2 - cx1)
+        min_w = max(min_w, float(core_w) * _CROP_MIN_WIDTH_VS_FACE_CORE)
+    if crop_w < min_w:
+        crop_w = int(math.ceil(min_w))
+        crop_h = int(math.ceil(float(crop_w) / aspect))
 
     desired_top = acy - 0.5 * float(crop_h)
     desired_left = acx - 0.5 * float(crop_w)
@@ -728,12 +745,19 @@ def _compute_crop_rect(
     aspect: float,
     target_face_height_frac: float = 0.50,
     anchor_xy: Optional[Tuple[float, float]] = None,
+    core_face_xyxy: Optional[Tuple[int, int, int, int]] = None,
 ) -> Tuple[int, int, int, int]:
     """
     Crop chữ nhật (x1,y1,x2,y2) trong ảnh — dịch khung nếu tràn biên (có thể lệch tâm so với anchor).
     """
     x1f, y1f, x2f, y2f = _compute_crop_rect_ideal(
-        img_w, img_h, face_xyxy, aspect, target_face_height_frac, anchor_xy
+        img_w,
+        img_h,
+        face_xyxy,
+        aspect,
+        target_face_height_frac,
+        anchor_xy,
+        core_face_xyxy=core_face_xyxy,
     )
     x1, y1, x2, y2 = int(round(x1f)), int(round(y1f)), int(round(x2f)), int(round(y2f))
 
@@ -1841,6 +1865,7 @@ def process_portrait_image(
             aspect=aspect,
             target_face_height_frac=target_face_h,
             anchor_xy=(anchor_x, anchor_y),
+            core_face_xyxy=(fx1, fy1, fx2, fy2),
         )
         oob = ideal[0] < 0 or ideal[1] < 0 or ideal[2] > w0 or ideal[3] > h0
         extreme_dims = (min(w0, h0) < _LETTERBOX_EXTREME_MIN_SHORT) or (
@@ -1866,6 +1891,7 @@ def process_portrait_image(
                 aspect=aspect,
                 target_face_height_frac=target_face_h,
                 anchor_xy=(anchor_x, anchor_y),
+                core_face_xyxy=(fx1, fy1, fx2, fy2),
             )
             cropped = _safe_crop_with_pad(bgr0, crop_rect)
             frame_extra = anchor_detail
