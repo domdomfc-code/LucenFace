@@ -161,6 +161,26 @@ def main() -> None:
             value=True,
             help="Tránh đứng UI khi tải MediaPipe (và rembg nếu bật ghép nền xanh).",
         )
+        st.markdown("### Cắt ảnh & viền")
+        crop_center_pick = st.radio(
+            "Căn tâm khi cắt theo mặt",
+            options=["mũi (MediaPipe)", "tâm bbox mặt"],
+            index=0,
+            help=(
+                "**Mũi**: dùng keypoint mũi từ Face Detection (ổn định hơn khi bbox lệch, giảm cắt mất trán/cằm). "
+                "Fallback: ước lượng từ bbox nếu không có keypoint (Haar). "
+                "**Tâm bbox**: hành vi cũ (tâm hình chữ nhật mặt)."
+            ),
+        )
+        crop_center_mode = "nose" if crop_center_pick.startswith("mũi") else "face"
+        letterbox_smart_framing = st.toggle(
+            "Viền tự động (letterbox) khi cần",
+            value=True,
+            help=(
+                "Bật: nếu khung chuẩn tỷ lệ tràn ra ngoài ảnh, hoặc ảnh quá nhỏ (<~380px cạnh ngắn) / quá lớn (>~5200px cạnh dài), "
+                "thêm vùng lấp màu (trung vị góc ảnh) thay vì dịch crop — giữ đúng tâm (mũi) và tỷ lệ chủ thể."
+            ),
+        )
         if replace_blue_bg:
             st.markdown("---")
             st.markdown("### Engine tách nền")
@@ -409,6 +429,8 @@ def main() -> None:
                     replace_blue_bg=replace_blue_bg,
                     skip_rembg_if_uniform_background=not force_blue_despite_uniform,
                     auto_orient=auto_orient,
+                    crop_center_mode=crop_center_mode,
+                    letterbox_smart_framing=letterbox_smart_framing,
                 )
             except RuntimeError as e:
                 st.error(str(e))

@@ -49,6 +49,8 @@ def run_portrait_process(
     replace_blue_bg: bool,
     skip_rembg_if_uniform_background: bool = True,
     auto_orient: bool = True,
+    crop_center_mode: str = "nose",
+    letterbox_smart_framing: bool = True,
 ) -> Any:
     """
     Gọi `PortraitProcessor.process` — chỉ truyền các kwarg có trong chữ ký
@@ -62,4 +64,8 @@ def run_portrait_process(
         kw["skip_rembg_if_uniform_background"] = skip_rembg_if_uniform_background
     if "auto_orient" in params:
         kw["auto_orient"] = bool(auto_orient)
+    if "crop_center_mode" in params:
+        kw["crop_center_mode"] = crop_center_mode
+    if "letterbox_smart_framing" in params:
+        kw["letterbox_smart_framing"] = bool(letterbox_smart_framing)
     return processor.process(pil, prefer_face_crop=prefer_face_crop, **kw)

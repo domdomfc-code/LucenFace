@@ -5,6 +5,10 @@ import math
 import os
 from typing import Any, Dict, List, Optional, Tuple
 
+# Ảnh quá nhỏ / quá lớn: ưu tiên letterbox (viền) thay vì dịch crop làm lệch tâm chủ thể
+_LETTERBOX_EXTREME_MIN_SHORT = 380
+_LETTERBOX_EXTREME_MAX_LONG = 5200
+
 # OpenCV is required for processing; keep import optional so UI can still load
 # and show a friendly error instead of crashing at import-time.
 try:
@@ -621,6 +625,40 @@ def _expand_face_bbox_for_portrait(
     return nx1, ny1, nx2, ny2
 
 
+def _compute_crop_rect_ideal(
+    img_w: int,
+    img_h: int,
+    face_xyxy: Tuple[int, int, int, int],
+    aspect: float,
+    target_face_height_frac: float = 0.50,
+    headroom_frac: float = 0.28,
+    anchor_xy: Optional[Tuple[float, float]] = None,
+) -> Tuple[float, float, float, float]:
+    """
+    Khung cắt đúng tỷ lệ `aspect`, kích thước theo chiều cao vùng mặt đã mở rộng,
+    căn theo anchor (mặc định: tâm bbox mở rộng). Có thể tràn ngoài ảnh — dùng letterbox sau.
+    """
+    fx1, fy1, fx2, fy2 = face_xyxy
+    face_h = max(1, fy2 - fy1)
+    if anchor_xy is not None:
+        acx, acy = float(anchor_xy[0]), float(anchor_xy[1])
+    else:
+        acx = (fx1 + fx2) / 2.0
+        acy = (fy1 + fy2) / 2.0
+
+    crop_h = int(face_h / _clamp(target_face_height_frac, 0.45, 0.75))
+    crop_w = int(crop_h * aspect)
+
+    desired_top = acy - (0.5 - headroom_frac) * crop_h
+    desired_left = acx - crop_w / 2.0
+
+    x1 = float(desired_left)
+    y1 = float(desired_top)
+    x2 = x1 + float(crop_w)
+    y2 = y1 + float(crop_h)
+    return x1, y1, x2, y2
+
+
 def _compute_crop_rect(
     img_w: int,
     img_h: int,
@@ -628,26 +666,15 @@ def _compute_crop_rect(
     aspect: float,
     target_face_height_frac: float = 0.50,
     headroom_frac: float = 0.28,
+    anchor_xy: Optional[Tuple[float, float]] = None,
 ) -> Tuple[int, int, int, int]:
     """
-    Compute crop rectangle (x1,y1,x2,y2) with desired aspect ratio,
-    trying to keep the face centered and occupying target fraction of crop height.
+    Crop chữ nhật (x1,y1,x2,y2) trong ảnh — dịch khung nếu tràn biên (có thể lệch tâm so với anchor).
     """
-    fx1, fy1, fx2, fy2 = face_xyxy
-    face_h = max(1, fy2 - fy1)
-    face_cx = (fx1 + fx2) / 2.0
-    face_cy = (fy1 + fy2) / 2.0
-
-    crop_h = int(face_h / _clamp(target_face_height_frac, 0.45, 0.75))
-    crop_w = int(crop_h * aspect)
-
-    desired_top = int(face_cy - (0.5 - headroom_frac) * crop_h)
-    desired_left = int(face_cx - crop_w / 2)
-
-    x1 = desired_left
-    y1 = desired_top
-    x2 = x1 + crop_w
-    y2 = y1 + crop_h
+    x1f, y1f, x2f, y2f = _compute_crop_rect_ideal(
+        img_w, img_h, face_xyxy, aspect, target_face_height_frac, headroom_frac, anchor_xy
+    )
+    x1, y1, x2, y2 = int(round(x1f)), int(round(y1f)), int(round(x2f)), int(round(y2f))
 
     if x1 < 0:
         x2 -= x1
@@ -669,6 +696,144 @@ def _compute_crop_rect(
     x2 = int(_clamp(x2, x1 + 1, img_w))
     y2 = int(_clamp(y2, y1 + 1, img_h))
     return x1, y1, x2, y2
+
+
+def _median_corner_fill_bgr(bgr: np.ndarray) -> Tuple[int, int, int]:
+    """Màu nền letterbox: trung vị các pixel góc (gần phông)."""
+    h, w = bgr.shape[:2]
+    k = max(2, min(h, w) // 24)
+    patches = (
+        bgr[0:k, 0:k],
+        bgr[0:k, w - k : w],
+        bgr[h - k : h, 0:k],
+        bgr[h - k : h, w - k : w],
+    )
+    flat = np.concatenate([p.reshape(-1, 3) for p in patches], axis=0).astype(np.float32)
+    if flat.size < 9:
+        return (245, 248, 252)
+    med = np.median(flat, axis=0)
+    return int(med[0]), int(med[1]), int(med[2])
+
+
+def _crop_rect_with_edge_fill(
+    bgr: np.ndarray,
+    x1: float,
+    y1: float,
+    x2: float,
+    y2: float,
+    fill_bgr: Tuple[int, int, int],
+) -> np.ndarray:
+    """
+    Cắt khung [x1,x2]×[y1,y2] cố định; phần nằm ngoài ảnh gốc được lấp bằng `fill_bgr`.
+    Giữ đúng tỷ lệ và vị trí anchor (không dịch crop khi tràn biên).
+    """
+    _require_cv2()
+    h, w = bgr.shape[:2]
+    cw = max(1, int(round(x2 - x1)))
+    ch = max(1, int(round(y2 - y1)))
+    out = np.empty((ch, cw, 3), dtype=np.uint8)
+    out[:, :] = np.array(fill_bgr, dtype=np.uint8).reshape(1, 1, 3)
+
+    src_x1 = max(0, int(math.floor(x1)))
+    src_y1 = max(0, int(math.floor(y1)))
+    src_x2 = min(w, int(math.ceil(x2)))
+    src_y2 = min(h, int(math.ceil(y2)))
+    if src_x2 <= src_x1 or src_y2 <= src_y1:
+        return out
+
+    dst_x1 = int(round(src_x1 - x1))
+    dst_y1 = int(round(src_y1 - y1))
+    patch = bgr[src_y1:src_y2, src_x1:src_x2]
+    ph, pw = patch.shape[:2]
+    out[dst_y1 : dst_y1 + ph, dst_x1 : dst_x1 + pw] = patch
+    return out
+
+
+def _heuristic_nose_xy_from_face_box(face_xyxy: Tuple[int, int, int, int]) -> Tuple[float, float]:
+    """Ước lượng mũi khi không có keypoint (Haar / lỗi MediaPipe)."""
+    x1, y1, x2, y2 = face_xyxy
+    fh = max(1, y2 - y1)
+    return (x1 + x2) / 2.0, float(y1) + 0.58 * float(fh)
+
+
+def _nose_tip_xy_from_mediapipe(
+    bgr: np.ndarray,
+    tight_face_xyxy: Tuple[int, int, int, int],
+    detector: Any | None,
+) -> Optional[Tuple[float, float]]:
+    """
+    NOSE_TIP từ Face Detection (keypoint thứ 3: 0 mắt phải, 1 mắt trái, 2 mũi).
+    Khớp detection có IoU cao nhất với bbox mặt detector.
+    """
+    if mp is None:
+        return None
+    fd = detector
+    if fd is None:
+        fd = _try_get_mediapipe_face_detector(min_confidence=0.5)
+    if fd is None:
+        return None
+    _require_cv2()
+    ih, iw = bgr.shape[:2]
+    brightness, contrast = _compute_brightness_contrast(bgr)
+    use_det_boost = brightness < 106 or contrast < 33
+    bgr_in = _boost_bgr_for_face_detection(bgr) if use_det_boost else bgr
+    rgb = cv2.cvtColor(bgr_in, cv2.COLOR_BGR2RGB)
+    try:
+        res = fd.process(rgb)
+    except Exception:
+        return None
+    if res is None or not getattr(res, "detections", None):
+        return None
+
+    tx1, ty1, tx2, ty2 = tight_face_xyxy
+    best_iou = 0.0
+    best: Optional[Tuple[float, float]] = None
+    for det in res.detections:
+        box = det.location_data.relative_bounding_box
+        dx1 = int(box.xmin * iw)
+        dy1 = int(box.ymin * ih)
+        dbw = int(box.width * iw)
+        dbh = int(box.height * ih)
+        dx2 = dx1 + dbw
+        dy2 = dy1 + dbh
+        dx1 = int(_clamp(dx1, 0, iw - 1))
+        dy1 = int(_clamp(dy1, 0, ih - 1))
+        dx2 = int(_clamp(dx2, dx1 + 1, iw))
+        dy2 = int(_clamp(dy2, dy1 + 1, ih))
+        iou = _iou_xyxy((dx1, dy1, dx2, dy2), (tx1, ty1, tx2, ty2))
+        if iou <= best_iou:
+            continue
+        kps = det.location_data.relative_keypoints
+        if not kps or len(kps) < 3:
+            continue
+        nose = kps[2]
+        nx = float(nose.x) * float(iw)
+        ny = float(nose.y) * float(ih)
+        best_iou = iou
+        best = (nx, ny)
+    if best is None or best_iou < 0.12:
+        return None
+    return best
+
+
+def _crop_anchor_xy(
+    bgr: np.ndarray,
+    tight_face_xyxy: Tuple[int, int, int, int],
+    detector: Any | None,
+    mode: str,
+) -> Tuple[float, float, str]:
+    """
+    Điểm căn khung crop trong toạ độ ảnh. `mode`: \"nose\" | \"face\".
+    Trả về (cx, cy, mô tả ngắn cho checklist).
+    """
+    x1, y1, x2, y2 = tight_face_xyxy
+    if (mode or "").lower() == "face":
+        return (x1 + x2) / 2.0, (y1 + y2) / 2.0, "Tâm bbox mặt (detector)."
+    nose = _nose_tip_xy_from_mediapipe(bgr, tight_face_xyxy, detector)
+    if nose is not None:
+        return nose[0], nose[1], "Tâm khung theo mũi (MediaPipe keypoint)."
+    hx, hy = _heuristic_nose_xy_from_face_box(tight_face_xyxy)
+    return hx, hy, "Tâm khung theo ước lượng mũi (bbox — không có keypoint)."
 
 
 def _safe_crop_with_pad(bgr: np.ndarray, rect: Tuple[int, int, int, int]) -> np.ndarray:
@@ -1077,6 +1242,8 @@ class PortraitProcessor:
         replace_background: bool = True,
         skip_rembg_if_uniform_background: bool = True,
         auto_orient: bool = True,
+        crop_center_mode: str = "nose",
+        letterbox_smart_framing: bool = True,
     ) -> ProcessResult:
         return process_portrait_image(
             pil_img,
@@ -1087,6 +1254,8 @@ class PortraitProcessor:
             replace_background=replace_background,
             skip_rembg_if_uniform_background=skip_rembg_if_uniform_background,
             auto_orient=auto_orient,
+            crop_center_mode=crop_center_mode,
+            letterbox_smart_framing=letterbox_smart_framing,
             _mp_face_detector=self._fd,
             _rembg_session=self._rembg_session,
             _selfie_segmentation=self._selfie,
@@ -1276,6 +1445,8 @@ def process_portrait_image(
     replace_background: bool = True,
     skip_rembg_if_uniform_background: bool = True,
     auto_orient: bool = True,
+    crop_center_mode: str = "nose",
+    letterbox_smart_framing: bool = True,
     _mp_face_detector: Any | None = None,
     _rembg_session: Any | None = None,
     _selfie_segmentation: Any | None = None,
@@ -1292,6 +1463,10 @@ def process_portrait_image(
     - Ảnh thiếu sáng: có thể tinh chỉnh bbox crop bằng MediaPipe Selfie Segmentation (tóc/vai).
     - Chỉnh sáng nhẹ (CLAHE + trộn Y) khi cần
     - `replace_background`: True → rembg + nền xanh; False → chỉ crop/scale theo tỷ lệ, giữ nền gốc.
+    - `crop_center_mode`: \"nose\" (mặc định) — căn khung crop theo mũi (MediaPipe keypoint, fallback ước lượng bbox);
+      \"face\" — tâm bbox mặt như trước.
+    - `letterbox_smart_framing`: khi khung crop lý tưởng tràn ngoài ảnh, hoặc ảnh quá nhỏ/rất lớn,
+      lấp viền bằng màu góc thay vì dịch crop (giữ tâm & tỷ lệ chủ thể).
     - Khi `replace_background` và `skip_rembg_if_uniform_background`: nếu viền khung đầu ra gần một màu
       (tiêu chuẩn phông), bỏ qua rembg và giữ nền gốc.
     - `_rembg_engine`: `"local"` (rembg + ONNX), `"remove_bg_api"` (API remove.bg), `"none"` (không tải model).
@@ -1310,6 +1485,9 @@ def process_portrait_image(
         errors.append(str(e))
         checks["Thư viện OpenCV"] = CheckResult(False, str(e))
         return ProcessResult(status="FAILED", errors=errors, warnings=warnings, checks=checks, processed_image=None)
+
+    _cc = (crop_center_mode or "nose").strip().lower()
+    crop_center_mode_norm = "face" if _cc in ("face", "bbox", "box", "center") else "nose"
 
     if auto_orient:
         pil_img = _pil_apply_exif_transpose(pil_img)
@@ -1518,15 +1696,46 @@ def process_portrait_image(
                 crop_face,
                 _selfie_segmentation,
             )
-        crop_rect = _compute_crop_rect(
+        anchor_x, anchor_y, anchor_detail = _crop_anchor_xy(
+            bgr0, (fx1, fy1, fx2, fy2), _mp_face_detector, crop_center_mode_norm
+        )
+        ideal = _compute_crop_rect_ideal(
             w0,
             h0,
             crop_face,
             aspect=aspect,
             target_face_height_frac=target_face_h,
             headroom_frac=headroom_crop,
+            anchor_xy=(anchor_x, anchor_y),
         )
-        cropped = _safe_crop_with_pad(bgr0, crop_rect)
+        oob = ideal[0] < 0 or ideal[1] < 0 or ideal[2] > w0 or ideal[3] > h0
+        extreme_dims = (min(w0, h0) < _LETTERBOX_EXTREME_MIN_SHORT) or (
+            max(w0, h0) > _LETTERBOX_EXTREME_MAX_LONG
+        )
+        use_letterbox = bool(letterbox_smart_framing) and (oob or extreme_dims)
+        if use_letterbox:
+            fill_bgr = _median_corner_fill_bgr(bgr0)
+            cropped = _crop_rect_with_edge_fill(bgr0, ideal[0], ideal[1], ideal[2], ideal[3], fill_bgr)
+            lb_note = []
+            if oob:
+                lb_note.append("khung chuẩn tràn ngoài ảnh — đã thêm viền")
+            if extreme_dims:
+                lb_note.append("ảnh rất nhỏ hoặc rất lớn — giữ tâm & tỷ lệ bằng viền")
+            frame_extra = ("; ".join(lb_note) + f" — {anchor_detail}") if lb_note else anchor_detail
+        else:
+            crop_rect = _compute_crop_rect(
+                w0,
+                h0,
+                crop_face,
+                aspect=aspect,
+                target_face_height_frac=target_face_h,
+                headroom_frac=headroom_crop,
+                anchor_xy=(anchor_x, anchor_y),
+            )
+            cropped = _safe_crop_with_pad(bgr0, crop_rect)
+            frame_extra = anchor_detail
+
+        checks["Căn khung crop"] = CheckResult(True, frame_extra)
     else:
         checks["Khung ảnh"] = CheckResult(
             True,
