@@ -1,0 +1,17 @@
+# Chạy từ gốc repo:
+#   docker compose -f host/docker-compose.yml up --build
+#
+# remove.bg (tùy chọn):
+#   export REMOVEBG_API_KEY=...   hoặc tạo file .env cùng cấp compose
+
+services:
+  lucenface:
+    build:
+      context: ..
+      dockerfile: host/Dockerfile
+    image: lucenface:local
+    ports:
+      - "8501:8501"
+    environment:
+      REMOVEBG_API_KEY: ${REMOVEBG_API_KEY:-}
+    restart: unless-stopped
