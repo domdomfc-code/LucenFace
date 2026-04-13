@@ -741,11 +741,26 @@ def _crop_rect_with_edge_fill(
     if src_x2 <= src_x1 or src_y2 <= src_y1:
         return out
 
-    dst_x1 = int(round(src_x1 - x1))
-    dst_y1 = int(round(src_y1 - y1))
     patch = bgr[src_y1:src_y2, src_x1:src_x2]
-    ph, pw = patch.shape[:2]
-    out[dst_y1 : dst_y1 + ph, dst_x1 : dst_x1 + pw] = patch
+    ph, pw = int(patch.shape[0]), int(patch.shape[1])
+
+    # Vị trí đích (float → int); làm tròn có thể làm dst + kích thước patch vượt (cw,ch) hoặc dst âm.
+    dst_x0 = int(round(float(src_x1) - x1))
+    dst_y0 = int(round(float(src_y1) - y1))
+
+    cy0 = max(0, dst_y0)
+    cx0 = max(0, dst_x0)
+    cy1 = min(ch, dst_y0 + ph)
+    cx1 = min(cw, dst_x0 + pw)
+    if cy0 >= cy1 or cx0 >= cx1:
+        return out
+
+    py0 = cy0 - dst_y0
+    px0 = cx0 - dst_x0
+    h_fit = cy1 - cy0
+    w_fit = cx1 - cx0
+    patch_fit = patch[py0 : py0 + h_fit, px0 : px0 + w_fit]
+    out[cy0:cy1, cx0:cx1] = patch_fit
     return out
 
 
