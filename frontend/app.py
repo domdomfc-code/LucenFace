@@ -143,9 +143,13 @@ def main() -> None:
         st.markdown("### Nâng cao")
         min_face_conf = st.slider("Độ tin cậy phát hiện mặt", min_value=0.3, max_value=0.9, value=0.9, step=0.05)
         auto_orient = st.toggle(
-            "Kiểm tra hướng ảnh (không xoay output)",
+            "Kiểm tra hướng ảnh",
             value=True,
-            help="Bật: hệ thống sẽ thử xoay khi kiểm tra checklist để cảnh báo ảnh bị xoay/lật, nhưng ảnh xuất ra vẫn giữ hướng gốc.",
+            help=(
+                "Bật: thử các hướng xoay để phát hiện mặt. Nếu ở hướng pixel gốc không thấy mặt nhưng xoay 90°/180°/270° "
+                "thì thấy (clipboard / EXIF lệch), pipeline sẽ áp dụng xoay đó và ảnh xuất theo hướng đã chuẩn hoá. "
+                "Lật gương / lật dọc vẫn bị từ chối nếu chỉ lật mới thấy mặt."
+            ),
         )
         enable_global_paste = st.toggle(
             "Bắt Ctrl+V toàn trang",
