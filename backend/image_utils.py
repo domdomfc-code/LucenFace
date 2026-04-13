@@ -13,6 +13,10 @@ _LETTERBOX_EXTREME_MAX_LONG = 5200
 _CROP_MIN_EXPANDED_WIDTH_MULT = 1.06
 _CROP_MIN_WIDTH_VS_FACE_CORE = 1.42
 
+# Viền đen hai bên (ảnh dán trên canvas/màn hình) — tránh lấy mẫu letterbox thành đen
+_TRIM_NEARBLACK_THRESH = 44
+_TRIM_NEARBLACK_MAX_FRAC = 0.26
+
 # OpenCV is required for processing; keep import optional so UI can still load
 # and show a friendly error instead of crashing at import-time.
 try:
@@ -783,6 +787,56 @@ def _compute_crop_rect(
     return x1, y1, x2, y2
 
 
+def _trim_nearblack_side_columns_bgr(bgr: np.ndarray) -> Tuple[np.ndarray, bool]:
+    """
+    Bỏ cột viền gần đen hai bên (max RGB theo cột < ngưỡng). Không đụng hàng trên/dưới —
+    tránh cắt nhầm khi hàng cuối là áo tối.
+    """
+    _require_cv2()
+    h, w = bgr.shape[:2]
+    if h < 16 or w < 24:
+        return bgr, False
+    mx = np.maximum(np.maximum(bgr[:, :, 0], bgr[:, :, 1]), bgr[:, :, 2])
+    col_peak = mx.max(axis=0).astype(np.int32)
+    max_skip = max(4, int(w * _TRIM_NEARBLACK_MAX_FRAC))
+    th = int(_TRIM_NEARBLACK_THRESH)
+
+    left = 0
+    while left < w and left < max_skip and int(col_peak[left]) < th:
+        left += 1
+    right = w - 1
+    skipped = 0
+    while right > left and skipped < max_skip and int(col_peak[right]) < th:
+        right -= 1
+        skipped += 1
+
+    new_w = right - left + 1
+    if new_w < max(48, int(w * 0.46)):
+        return bgr, False
+    if left == 0 and right == w - 1:
+        return bgr, False
+    return bgr[:, left : right + 1, :].copy(), True
+
+
+def _median_bgr_ignoring_nearblack(
+    pixels_bgr: np.ndarray,
+    *,
+    min_channel: int = 52,
+) -> Optional[Tuple[float, float, float]]:
+    """Trung vị BGR chỉ trên pixel đủ sáng (bỏ viền đen lẫn trong mẫu)."""
+    if pixels_bgr.size < 12:
+        return None
+    v = np.maximum(
+        np.maximum(pixels_bgr[:, 0], pixels_bgr[:, 1]),
+        pixels_bgr[:, 2],
+    )
+    sel = pixels_bgr[v >= min_channel]
+    if sel.shape[0] < max(6, pixels_bgr.shape[0] // 14):
+        return None
+    med = np.median(sel.astype(np.float32), axis=0)
+    return float(med[0]), float(med[1]), float(med[2])
+
+
 def _median_corner_fill_bgr(bgr: np.ndarray) -> Tuple[int, int, int]:
     """Fallback màu letterbox: trung vị pixel góc (khi không suy ra được vùng viền OOB)."""
     h, w = bgr.shape[:2]
@@ -844,13 +898,21 @@ def _letterbox_fill_bgr_for_ideal_rect(
     flat = np.concatenate(chunks, axis=0).astype(np.float32)
     if flat.shape[0] < 3:
         return _median_corner_fill_bgr(bgr)
-    med = np.median(flat, axis=0)
+    bright_med = _median_bgr_ignoring_nearblack(flat.astype(np.uint8))
+    if bright_med is not None:
+        med = np.array(bright_med, dtype=np.float32)
+    else:
+        med = np.median(flat, axis=0)
     # Mép trái/phải vẫn có thể dính tóc tối — nếu trung vị gần đen, ưu tiên dải trên cùng (nền).
     if float(med[0] + med[1] + med[2]) < 130.0 and (x1 < 0.0 or x2 > float(w)):
         kh2 = min(k, h)
-        top_band = bgr[0:kh2, :].reshape(-1, 3).astype(np.float32)
+        top_band = bgr[0:kh2, :].reshape(-1, 3)
         if top_band.shape[0] >= 9:
-            med2 = np.median(top_band, axis=0)
+            tb_bright = _median_bgr_ignoring_nearblack(top_band)
+            if tb_bright is not None:
+                med2 = np.array(tb_bright, dtype=np.float32)
+            else:
+                med2 = np.median(top_band.astype(np.float32), axis=0)
             if float(med2[0] + med2[1] + med2[2]) > float(med[0] + med[1] + med[2]) + 25.0:
                 med = med2
     return int(med[0]), int(med[1]), int(med[2])
@@ -1672,6 +1734,11 @@ def process_portrait_image(
     if auto_orient:
         orient_msg = "Hướng ảnh phù hợp (đã áp dụng EXIF nếu có)."
     bgr0 = _pil_to_bgr(pil_img)
+    bgr0, did_trim_sides = _trim_nearblack_side_columns_bgr(bgr0)
+    if did_trim_sides:
+        warnings.append(
+            "Đã bỏ dải đen hai bên (ảnh nằm trong khung đen/canvas) — tránh lẫn màu nền khi thêm viền letterbox."
+        )
 
     # Mặc định xử lý theo hướng sau EXIF. Có thể thay bgr0 bằng bản đã xoay nếu gốc không detect được mặt.
     faces, n_face_candidates = _detect_faces_bgr_with_boost(bgr0, min_face_conf, _mp_face_detector)
