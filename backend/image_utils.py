@@ -810,6 +810,9 @@ def _letterbox_fill_bgr_for_ideal_rect(
     """
     Màu lấp viền: chỉ lấy mẫu từ các **cạnh ảnh gốc** tương ứng chỗ thực sự thiếu pixel
     (khung ideal tràn ra ngoài). Tránh góc dưới (áo/vai) làm sáng cả vùng lấp phía trên.
+
+    Với tràn trái/phải (hay gặp khi tỷ lệ 4x6 / 2:3 hẹp hơn 3:4): **không** lấy cả cột dọc —
+    tóc/áo tối hai bên kéo trung vị xuống ~đen. Chỉ lấy dải **phía trên** mép ngang (nền).
     """
     h, w = bgr.shape[:2]
     if h < 2 or w < 2:
@@ -817,6 +820,9 @@ def _letterbox_fill_bgr_for_ideal_rect(
 
     k = max(2, min(h, w) // 24)
     k = min(k, max(1, h // 2), max(1, w // 2))
+
+    # Chiều cao lấy mẫu mép trái/phải: ~38% từ đỉnh — thường chỉ nền, tránh tóc/áo full-height.
+    y_side = max(k, min(h - 1, int(h * 0.38)))
 
     chunks: List[np.ndarray] = []
     if y1 < 0.0:
@@ -827,10 +833,10 @@ def _letterbox_fill_bgr_for_ideal_rect(
         chunks.append(bgr[h - kh : h, :].reshape(-1, 3))
     if x1 < 0.0:
         kw = min(k, w)
-        chunks.append(bgr[:, 0:kw].reshape(-1, 3))
+        chunks.append(bgr[0:y_side, 0:kw].reshape(-1, 3))
     if x2 > float(w):
         kw = min(k, w)
-        chunks.append(bgr[:, w - kw : w].reshape(-1, 3))
+        chunks.append(bgr[0:y_side, w - kw : w].reshape(-1, 3))
 
     if not chunks:
         return _median_corner_fill_bgr(bgr)
@@ -839,6 +845,14 @@ def _letterbox_fill_bgr_for_ideal_rect(
     if flat.shape[0] < 3:
         return _median_corner_fill_bgr(bgr)
     med = np.median(flat, axis=0)
+    # Mép trái/phải vẫn có thể dính tóc tối — nếu trung vị gần đen, ưu tiên dải trên cùng (nền).
+    if float(med[0] + med[1] + med[2]) < 130.0 and (x1 < 0.0 or x2 > float(w)):
+        kh2 = min(k, h)
+        top_band = bgr[0:kh2, :].reshape(-1, 3).astype(np.float32)
+        if top_band.shape[0] >= 9:
+            med2 = np.median(top_band, axis=0)
+            if float(med2[0] + med2[1] + med2[2]) > float(med[0] + med[1] + med[2]) + 25.0:
+                med = med2
     return int(med[0]), int(med[1]), int(med[2])
 
 
