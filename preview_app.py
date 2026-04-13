@@ -12,10 +12,18 @@ Deploy Cloud:
 from __future__ import annotations
 
 import io
+import sys
+from pathlib import Path
 from typing import Dict, List, Tuple
 
 import streamlit as st
 from PIL import Image, ImageDraw
+
+_ROOT = Path(__file__).resolve().parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+from frontend.streamlit_helpers import render_checklist
 
 APP_TITLE = "Chuẩn hóa ảnh chân dung học sinh"
 APP_BUILD = "preview-ui-only"
@@ -197,20 +205,6 @@ def _inject_css() -> None:
     )
 
 
-def _render_checklist(checks: Dict[str, Dict[str, str]]) -> None:
-    if not checks:
-        return
-    rows = [
-        {
-            "Đạt": "Có" if payload["ok"] else "Không",
-            "Tiêu chí": str(name),
-            "Chi tiết": str(payload["message"]).strip(),
-        }
-        for name, payload in checks.items()
-    ]
-    st.dataframe(rows, use_container_width=True, hide_index=True)
-
-
 def _fake_processed_preview(pil: Image.Image, blue_hex: str) -> Image.Image:
     """Ảnh demo: nền xanh + khung trắng (không xử lý CV thật)."""
     w, h = pil.size
@@ -311,7 +305,7 @@ def main() -> None:
                 st.markdown("**Trạng thái / Checklist (demo)**")
                 st.markdown('<span class="badge-ok">PREVIEW</span>', unsafe_allow_html=True)
                 st.markdown("**Checklist**")
-                _render_checklist(fake_checks)
+                render_checklist(fake_checks)
             with c3:
                 st.markdown("**Processed (demo)**")
                 st.image(out, use_container_width=True)

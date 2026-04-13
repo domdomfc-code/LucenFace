@@ -1,646 +1,39 @@
+"""
+Ứng dụng Streamlit chính: UI + luồng batch ảnh.
+Chạy từ gốc dự án: `streamlit run app.py` (khuyến nghị) hoặc `streamlit run frontend/app.py`.
+"""
 from __future__ import annotations
 
-import base64
-import inspect
 import io
-import os
 import platform
-import re
-import sys
-import zipfile
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 import streamlit as st
 from PIL import Image, ImageOps
 
-# Đảm bảo import được package `backend` khi chạy: streamlit run frontend/app.py
-_ROOT = Path(__file__).resolve().parent.parent
-if str(_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ROOT))
-
+import frontend.bootstrap  # noqa: F401 — đưa thư mục gốc dự án vào sys.path
+from frontend import backend_lazy
+from frontend.backend_lazy import ensure_image_backend
+from frontend.config import APP_BUILD, APP_TITLE, BLUE
+from frontend.image_io import (
+    decode_data_url_image,
+    decode_data_url_image_verbose,
+    gather_staged_images,
+    looks_like_heic,
+    normalize_filename_hint,
+    sniff_image_kind,
+)
+from frontend.processor_service import get_cached_portrait_processor, run_portrait_process
+from frontend.streamlit_helpers import (
+    cv2_troubleshoot_markdown,
+    make_zip,
+    read_remove_bg_api_key,
+    render_checklist,
+    result_to_checks_dict,
+)
+from frontend.styling import inject_app_css, render_sidebar_reopen_button
+from frontend.thumbnails import render_image_thumbnails
 from paste_image_component import paste_image_from_clipboard
-
-# Không import `backend.image_utils` lúc load module — tránh crash/OOM/timeout healthz trên Streamlit Cloud
-# (OpenCV + MediaPipe + rembg + ONNX rất nặng). Chỉ tải khi `_ensure_image_backend()` chạy.
-if TYPE_CHECKING:
-    from backend.image_utils import PortraitProcessor, ProcessResult
-
-PortraitProcessor = None  # type: ignore[assignment,misc]
-ProcessResult = None  # type: ignore[assignment,misc]
-pil_to_jpeg_bytes = None  # type: ignore[assignment,misc]
-_image_backend_loaded = False
-
-
-def _ensure_image_backend() -> None:
-    """Lazy-import pipeline ảnh — gọi trước khi dùng PortraitProcessor / pil_to_jpeg_bytes."""
-    global PortraitProcessor, ProcessResult, pil_to_jpeg_bytes, _image_backend_loaded
-    if _image_backend_loaded:
-        return
-    from backend.image_utils import PortraitProcessor as _PC, ProcessResult as _PR, pil_to_jpeg_bytes as _pj
-
-    PortraitProcessor = _PC
-    ProcessResult = _PR
-    pil_to_jpeg_bytes = _pj
-    _image_backend_loaded = True
-
-
-def _decode_data_url_image(data_url: str) -> Optional[Tuple[bytes, str]]:
-    """Parse data:image/...;base64,... → (bytes, filename gợi ý)."""
-    if not data_url or not isinstance(data_url, str) or not data_url.startswith("data:"):
-        return None
-    m = re.match(
-        r"data:image/([\w.+-]+);base64,(.+)",
-        data_url.strip(),
-        re.DOTALL | re.IGNORECASE,
-    )
-    if not m:
-        return None
-    mime = m.group(1).lower().replace("jpg", "jpeg")
-    b64 = m.group(2).strip()
-    try:
-        raw = base64.b64decode(b64, validate=False)
-    except Exception:
-        return None
-    if not raw:
-        return None
-    ext = "png"
-    if "jpeg" in mime or mime == "jpeg":
-        ext = "jpg"
-    elif "webp" in mime:
-        ext = "webp"
-    elif "gif" in mime:
-        ext = "gif"
-    return raw, f"clipboard.{ext}"
-
-
-def _decode_data_url_image_verbose(data_url: Any) -> Tuple[Optional[Tuple[bytes, str]], str | None]:
-    """
-    Decode data URL từ clipboard, trả về (bytes, filename) hoặc (None, reason).
-    """
-    if not data_url:
-        return None, "Clipboard rỗng."
-    if not isinstance(data_url, str):
-        return None, "Dữ liệu clipboard không hợp lệ."
-    if not data_url.startswith("data:"):
-        return None, "Clipboard không phải data URL."
-    if not data_url.lower().startswith("data:image/"):
-        return None, "Clipboard không phải ảnh (data:image/...)."
-    dec = _decode_data_url_image(data_url)
-    if not dec:
-        return None, "Không giải mã được ảnh từ clipboard (base64 lỗi hoặc định dạng lạ)."
-    return dec, None
-
-
-def _sniff_image_kind(raw: bytes) -> str | None:
-    """
-    Sniff magic bytes để chặn file giả mạo không phải ảnh.
-    Trả về: 'jpeg' | 'png' | 'gif' | 'webp' hoặc None.
-    """
-    if not raw or len(raw) < 12:
-        return None
-    if raw[:2] == b"\xff\xd8":
-        return "jpeg"
-    if raw[:8] == b"\x89PNG\r\n\x1a\n":
-        return "png"
-    if raw[:6] in (b"GIF87a", b"GIF89a"):
-        return "gif"
-    if raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
-        return "webp"
-    return None
-
-
-def _normalize_filename_hint(name: str) -> str:
-    return (name or "").strip().replace("\\", "/").split("/")[-1]
-
-
-def _looks_like_heic(name: str, raw: bytes) -> bool:
-    n = _normalize_filename_hint(name).lower()
-    if n.endswith(".heic") or n.endswith(".heif"):
-        return True
-    # HEIF/HEIC brand in ftyp box
-    if len(raw) >= 12 and raw[4:8] == b"ftyp":
-        brand = raw[8:12]
-        if brand in (b"heic", b"heix", b"hevc", b"hevx", b"mif1", b"msf1"):
-            return True
-    return False
-
-
-def _gather_staged_images(upload_list: List[Any], pasted_data_url: Any) -> List[Tuple[str, bytes]]:
-    """Đọc bytes từ upload + clipboard (một lần) để xem trước và xử lý."""
-    out: List[Tuple[str, bytes]] = []
-    for up in upload_list:
-        try:
-            up.seek(0)
-        except Exception:
-            pass
-        out.append((up.name, up.read()))
-    if pasted_data_url:
-        dec, _reason = _decode_data_url_image_verbose(pasted_data_url)
-        if dec:
-            blob, fn = dec
-            out.append((fn, blob))
-    return out
-
-
-def _render_image_thumbnails(
-    staged: List[Tuple[str, bytes]],
-    selected: Dict[str, bool],
-    *,
-    cols_per_row: int = 6,
-    width_px: int = 112,
-) -> None:
-    st.markdown("### Xem trước")
-    st.caption(f"**{len(staged)}** ảnh — kiểm tra nhanh trước khi xử lý.")
-    for row_start in range(0, len(staged), cols_per_row):
-        cols = st.columns(cols_per_row)
-        for ci, col in enumerate(cols):
-            idx = row_start + ci
-            if idx >= len(staged):
-                break
-            fname, raw_b = staged[idx]
-            key = f"sel::{idx}::{fname}"
-            with col:
-                selected[key] = st.checkbox(
-                    "Chọn",
-                    value=selected.get(key, True),
-                    key=f"thumb_cb_{idx}_{hash(fname)}",
-                    label_visibility="collapsed",
-                )
-                try:
-                    p = Image.open(io.BytesIO(raw_b))
-                    try:
-                        p = ImageOps.exif_transpose(p)
-                    except Exception:
-                        pass
-                    p = p.convert("RGB")
-                    cap = fname if len(fname) <= 32 else fname[:29] + "…"
-                    st.image(p, caption=cap, width=width_px)
-                except Exception:
-                    short = fname[:22] + "…" if len(fname) > 22 else fname
-                    st.markdown(
-                        '<div style="display:inline-block;padding:2px 8px;border-radius:999px;background:#fee2e2;color:#991b1b;font-weight:900;font-size:12px;">Lỗi</div>',
-                        unsafe_allow_html=True,
-                    )
-                    st.caption(f"`{short}`")
-                    st.caption("Không xem trước được.")
-
-
-def _read_remove_bg_api_key() -> str | None:
-    """API key remove.bg: Streamlit Secrets hoặc biến môi trường REMOVEBG_API_KEY."""
-    try:
-        k = st.secrets.get("REMOVEBG_API_KEY")
-        if k is not None and str(k).strip():
-            return str(k).strip()
-    except Exception:
-        pass
-    v = os.environ.get("REMOVEBG_API_KEY", "").strip()
-    return v or None
-
-
-def _cv2_troubleshoot_markdown() -> str:
-    if platform.system() == "Windows":
-        return (
-            "**Windows (máy bạn):**\n\n"
-            "1. PowerShell trong thư mục dự án: `python -m venv .venv`\n"
-            "2. Bật venv: `.\\.venv\\Scripts\\Activate.ps1`  \n"
-            "   (nếu bị chặn: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`)\n"
-            "3. Cài: `pip install -U pip` rồi `pip install -r requirements.txt`\n"
-            "4. Chạy: `streamlit run app.py`\n\n"
-            "Chỉ thiếu OpenCV: `pip install opencv-python-headless` trong venv.\n\n"
-            "Lỗi kiểu `libgthread` / `.so` là của **Linux** (Cloud), không áp dụng Windows — không cần `apt` hay `packages.txt` trên máy bạn."
-        )
-    return (
-        "**macOS / Linux (local):** `python3 -m venv .venv` → `source .venv/bin/activate` "
-        "→ `pip install -r requirements.txt` → `streamlit run app.py`.\n\n"
-        "**Streamlit Cloud (Linux):** thêm `libgl1` và `libglib2.0-0t64` vào `packages.txt` "
-        "nếu thiếu `libGL.so.1` hoặc `libgthread-2.0.so.0`. Không dùng `libglib2.0-0` (tên cũ)."
-    )
-
-
-APP_TITLE = "Chuẩn hóa ảnh chân dung học sinh"
-# Đổi số khi deploy để kiểm tra Streamlit Cloud đã build bản mới (sidebar hiển thị).
-APP_BUILD = "3.11.6-sidebar-expand-on-each-visit"
-BLUE = "#005BC4"
-BG = "#F6F9FF"
-
-
-def _inject_css() -> None:
-    st.markdown(
-        f"""
-        <style>
-          :root {{
-            --blue: {BLUE};
-            --bg: {BG};
-            --card: #ffffff;
-            --text: #0f172a;
-            --muted: #64748b;
-            --border: rgba(2, 6, 23, 0.10);
-            --shadow: 0 10px 30px rgba(2, 6, 23, 0.06);
-          }}
-
-          .stApp {{
-            background:
-              radial-gradient(1000px 500px at 20% 0%, rgba(0, 91, 196, 0.14), rgba(0,0,0,0) 60%),
-              radial-gradient(900px 500px at 90% 10%, rgba(56, 189, 248, 0.14), rgba(0,0,0,0) 60%),
-              var(--bg);
-          }}
-
-          section.main > div {{
-            padding-top: 1.25rem;
-          }}
-
-          /* Không ép width sidebar bằng !important: Streamlit khi thu gọn cần co width ~0;
-             nếu không, vùng trái vẫn “chiếm chỗ” và cột chính bị ép sang phải / hẹp. */
-
-          /* Không ẩn cả header — Streamlit cần vùng này để mở lại sidebar khi thu gọn */
-          header[data-testid="stHeader"] {{
-            background: rgba(255, 255, 255, 0.55) !important;
-            backdrop-filter: blur(10px);
-            border-bottom: 1px solid var(--border);
-          }}
-          .stDeployButton {{
-            display: none !important;
-          }}
-          footer {{
-            visibility: hidden;
-            height: 0px;
-          }}
-
-          .topbar {{
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 12px;
-            background: rgba(255,255,255,0.75);
-            border: 1px solid var(--border);
-            border-radius: 16px;
-            padding: 12px 14px;
-            box-shadow: var(--shadow);
-            backdrop-filter: blur(10px);
-          }}
-          .brand {{
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            font-weight: 900;
-            color: var(--text);
-            letter-spacing: -0.02em;
-          }}
-          .brand-badge {{
-            width: 34px;
-            height: 34px;
-            border-radius: 10px;
-            background: linear-gradient(135deg, var(--blue), #38bdf8);
-            box-shadow: 0 10px 22px rgba(0,91,196,0.20);
-          }}
-          .brand-title {{
-            font-size: 1.05rem;
-            line-height: 1.1;
-          }}
-          .brand-sub {{
-            font-size: 0.8rem;
-            color: var(--muted);
-            font-weight: 700;
-            margin-top: 1px;
-          }}
-          .top-actions {{
-            display: flex;
-            gap: 8px;
-            align-items: center;
-            color: var(--muted);
-            font-weight: 700;
-          }}
-          .pill {{
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            padding: 7px 10px;
-            border: 1px solid var(--border);
-            border-radius: 999px;
-            background: rgba(255,255,255,0.9);
-          }}
-
-          .app-title {{
-            font-size: 1.8rem;
-            font-weight: 900;
-            color: var(--text);
-            margin: 0.35rem 0 0.2rem 0;
-            letter-spacing: -0.03em;
-          }}
-          .app-subtitle {{
-            color: var(--muted);
-            margin-bottom: 1.0rem;
-            font-weight: 600;
-          }}
-          .card {{
-            background: var(--card);
-            border: 1px solid var(--border);
-            border-radius: 16px;
-            padding: 14px 14px 10px 14px;
-            box-shadow: var(--shadow);
-          }}
-          .card-soft {{
-            background: rgba(255,255,255,0.85);
-            border: 1px solid var(--border);
-            border-radius: 16px;
-            padding: 14px;
-            box-shadow: var(--shadow);
-            backdrop-filter: blur(10px);
-          }}
-          .badge-ok {{
-            display: inline-block;
-            padding: 2px 10px;
-            border-radius: 999px;
-            background: rgba(22,163,74,0.12);
-            color: #166534;
-            font-weight: 700;
-            font-size: 0.85rem;
-          }}
-          .badge-fail {{
-            display: inline-block;
-            padding: 2px 10px;
-            border-radius: 999px;
-            background: rgba(220,38,38,0.12);
-            color: #991b1b;
-            font-weight: 700;
-            font-size: 0.85rem;
-          }}
-          .small-note {{
-            font-size: 0.9rem;
-            opacity: 0.85;
-          }}
-          .checklist {{
-            margin-top: 6px;
-            padding-left: 0px;
-          }}
-          .check-item {{
-            display: flex;
-            gap: 8px;
-            margin: 4px 0px;
-            align-items: baseline;
-          }}
-          .check-name {{
-            font-weight: 700;
-            color: #111827;
-            min-width: 160px;
-          }}
-          .check-msg {{
-            color: #374151;
-            opacity: 0.95;
-          }}
-          .muted {{
-            color: var(--muted);
-          }}
-
-          /* Một vùng upload chính — giao diện hero tối, căn giữa (theo mẫu “Chọn ảnh”). */
-          section.main [data-testid="stFileUploader"] {{
-            margin-top: 0 !important;
-          }}
-          section.main [data-testid="stFileUploader"] > div {{
-            background: #1e1e24 !important;
-            border: 1px solid rgba(255, 255, 255, 0.08) !important;
-            border-top: 1px dashed rgba(255, 255, 255, 0.18) !important;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
-            border-radius: 0 !important;
-            padding: 1.1rem 1.25rem 1.15rem !important;
-            box-shadow: none !important;
-          }}
-          section.main [data-testid="stFileUploader"] label {{
-            color: rgba(255, 255, 255, 0.88) !important;
-            font-weight: 700 !important;
-          }}
-          section.main [data-testid="stFileUploader"] span[class*="uploadedFile"] {{
-            color: rgba(255, 255, 255, 0.9) !important;
-          }}
-          section.main [data-testid="stFileUploader"] small {{
-            color: rgba(255, 255, 255, 0.5) !important;
-            font-weight: 600 !important;
-          }}
-          section.main [data-testid="stFileUploader"] [data-testid="stMarkdownContainer"] p,
-          section.main [data-testid="stFileUploader"] [data-testid="stCaption"] {{
-            color: rgba(255, 255, 255, 0.62) !important;
-          }}
-          section.main [data-testid="stFileUploader"] button {{
-            background: var(--blue) !important;
-            color: #fff !important;
-            border: none !important;
-            border-radius: 9999px !important;
-            font-weight: 800 !important;
-            padding: 0.55rem 1.35rem !important;
-            box-shadow: 0 8px 22px rgba(0, 91, 196, 0.35) !important;
-          }}
-          section.main [data-testid="stFileUploader"] button::before {{
-            content: "+ ";
-            font-weight: 900;
-            margin-right: 0.15rem;
-          }}
-          section.main [data-testid="stFileUploader"] button:hover {{
-            filter: brightness(1.08);
-          }}
-
-          .p2c-upload-hero-top {{
-            text-align: center;
-            background: #1e1e24;
-            color: rgba(255, 255, 255, 0.92);
-            border-radius: 16px 16px 0 0;
-            padding: 2rem 1.5rem 1.15rem;
-            border: 1px solid rgba(255, 255, 255, 0.08);
-            border-bottom: none;
-            margin-bottom: 0;
-          }}
-          .p2c-upload-hero-top .p2c-upload-icon {{
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            width: 64px;
-            height: 64px;
-            border-radius: 16px;
-            background: #374151;
-            margin-bottom: 1rem;
-          }}
-          .p2c-upload-tagline-scroll {{
-            overflow-x: auto;
-            overflow-y: hidden;
-            -webkit-overflow-scrolling: touch;
-            text-align: center;
-            margin: 0 -0.35rem;
-            padding: 0 0.35rem 0.15rem;
-            scrollbar-width: thin;
-          }}
-          .p2c-upload-hero-top .p2c-upload-tagline {{
-            display: inline-block;
-            margin: 0;
-            font-size: clamp(0.78rem, 1.1vw + 0.65rem, 0.95rem);
-            line-height: 1.45;
-            color: rgba(255, 255, 255, 0.72);
-            font-weight: 600;
-            white-space: nowrap;
-            max-width: none;
-          }}
-          section.main [data-testid="column"]:has(.p2c-upload-hero-top) iframe {{
-            border-radius: 0 0 16px 16px !important;
-          }}
-          section.main [data-testid="column"]:has(.p2c-upload-hero-top) [data-testid="stIFrame"] {{
-            margin-bottom: 0.25rem;
-          }}
-          .p2c-upload-empty {{
-            text-align: center;
-            padding: 0.85rem 1rem;
-            margin-top: 0.75rem;
-            border-radius: 12px;
-            background: rgba(0, 91, 196, 0.12);
-            color: #0f172a;
-            font-weight: 700;
-            font-size: 0.92rem;
-            border: 1px solid rgba(0, 91, 196, 0.2);
-          }}
-
-          .stButton > button {{
-            border-radius: 12px;
-            font-weight: 800;
-            border: 1px solid var(--border);
-          }}
-          .stDownloadButton > button {{
-            border-radius: 12px;
-            font-weight: 800;
-          }}
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def _sidebar_reopen_button() -> None:
-    """Nút ☰ + mở sidebar khi vừa tải trang (Streamlit nhớ thu gọn trong localStorage, bỏ qua initial_sidebar_state)."""
-    html = """
-<!DOCTYPE html><html><head><meta charset="utf-8"></head>
-<body style="margin:0;padding:0;background:transparent;">
-<div style="position:fixed;top:52px;left:8px;z-index:999999;">
-<button type="button" title="Mở cài đặt (sidebar)"
-  onclick="(() => {
-    try {
-      const d = window.parent.document;
-      const q = (s) => d.querySelector(s);
-      (q('[data-testid="collapsedControl"]')
-        || q('[data-testid="stSidebarCollapsedControl"]'))?.click();
-    } catch (e) {}
-  })()"
-  style="font-size:1.05rem;line-height:1;padding:0.45rem 0.55rem;border-radius:10px;
-         border:1px solid rgba(15,23,42,0.12);background:rgba(255,255,255,0.96);
-         cursor:pointer;box-shadow:0 4px 14px rgba(15,23,42,0.12);color:#0f172a;">
-  ☰
-</button>
-</div>
-<script>
-(function () {
-  const w = window.parent;
-  if (w.__p2cSidebarExpandOnLoadScheduled) return;
-  w.__p2cSidebarExpandOnLoadScheduled = true;
-  const expandIfCollapsed = () => {
-    try {
-      const d = w.document;
-      const side = d.querySelector('section[data-testid="stSidebar"]');
-      if (!side) return;
-      if (side.getBoundingClientRect().width >= 64) return;
-      const q = (s) => d.querySelector(s);
-      (q('[data-testid="collapsedControl"]')
-        || q('[data-testid="stSidebarCollapsedControl"]'))?.click();
-    } catch (e) {}
-  };
-  [0, 350, 900, 1800].forEach((ms) => setTimeout(expandIfCollapsed, ms));
-})();
-</script>
-</body></html>
-"""
-    iframe = getattr(st, "iframe", None)
-    if iframe is not None:
-        iframe(html, height=52)
-    else:
-        import streamlit.components.v1 as components
-
-        components.html(html, height=52)
-
-
-def _render_checklist(checks: Dict[str, Dict[str, str]]) -> None:
-    """Bảng dữ liệu — không qua Markdown/HTML (tránh lộ thẻ hoặc ký tự bị hiểu nhầm)."""
-    if not checks:
-        return
-    rows = [
-        {
-            "Đạt": "Có" if payload["ok"] else "Không",
-            "Tiêu chí": str(name),
-            "Chi tiết": str(payload["message"]).strip(),
-        }
-        for name, payload in checks.items()
-    ]
-    st.dataframe(rows, width="stretch", hide_index=True)
-
-
-def _result_to_checks_dict(res: ProcessResult) -> Dict[str, Dict[str, str]]:
-    out: Dict[str, Dict[str, str]] = {}
-    for k, v in res.checks.items():
-        out[k] = {"ok": bool(v.ok), "message": str(v.message)}
-    return out
-
-
-def _make_zip(files: List[Tuple[str, bytes]]) -> bytes:
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as z:
-        for name, data in files:
-            z.writestr(name, data)
-    return buf.getvalue()
-
-
-@st.cache_resource(show_spinner=False)
-def _get_processor(
-    ratio: str,
-    blue_rgb: Tuple[int, int, int],
-    min_face_conf: float,
-    *,
-    rembg_engine: str,
-    rembg_model: str,
-    remove_bg_api_key: str | None,
-    cache_version: str = APP_BUILD,
-) -> PortraitProcessor:
-    """
-    `cache_version` đổi khi deploy (APP_BUILD) để tránh giữ PortraitProcessor cũ
-    không khớp chữ ký `process(..., replace_background=...)` → TypeError trên Cloud.
-    """
-    _ensure_image_backend()
-    _ = cache_version  # phân vùng cache theo APP_BUILD
-    return PortraitProcessor(
-        ratio=ratio,
-        blue_rgb=blue_rgb,
-        min_face_conf=min_face_conf,
-        rembg_engine=rembg_engine,
-        rembg_model=rembg_model,
-        remove_bg_api_key=remove_bg_api_key,
-    )
-
-
-def _run_processor(
-    processor: PortraitProcessor,
-    pil: Image.Image,
-    *,
-    prefer_face_crop: bool,
-    replace_blue_bg: bool,
-    skip_rembg_if_uniform_background: bool = True,
-    auto_orient: bool = True,
-) -> ProcessResult:
-    """
-    Gọi `PortraitProcessor.process` — chỉ truyền các kwarg có trong chữ ký
-    (tránh TypeError khi worker Cloud chạy bản `backend` cũ hơn `frontend`).
-    """
-    params = inspect.signature(processor.process).parameters
-    kw: Dict[str, object] = {}
-    if "replace_background" in params:
-        kw["replace_background"] = replace_blue_bg
-    if "skip_rembg_if_uniform_background" in params:
-        kw["skip_rembg_if_uniform_background"] = skip_rembg_if_uniform_background
-    if "auto_orient" in params:
-        kw["auto_orient"] = bool(auto_orient)
-    return processor.process(pil, prefer_face_crop=prefer_face_crop, **kw)
 
 
 def main() -> None:
@@ -650,8 +43,8 @@ def main() -> None:
         layout="wide",
         initial_sidebar_state="expanded",
     )
-    _inject_css()
-    _sidebar_reopen_button()
+    inject_app_css()
+    render_sidebar_reopen_button()
 
     st.markdown(
         f"""
@@ -776,7 +169,7 @@ def main() -> None:
             if _eng_pick.startswith("remove.bg"):
                 rembg_engine = "remove_bg_api"
                 st.caption("[remove.bg — lấy API key](https://www.remove.bg/api)")
-                if _read_remove_bg_api_key():
+                if read_remove_bg_api_key():
                     st.success("Đã có `REMOVEBG_API_KEY` (Secrets / môi trường).")
                 else:
                     st.warning("Thêm `REMOVEBG_API_KEY` trong **Streamlit Secrets** hoặc biến môi trường.")
@@ -836,11 +229,10 @@ def main() -> None:
             )
             return
 
-    # Stage bytes into session_state so previews don't re-read unpredictably across reruns.
-    staged = _gather_staged_images(upload_list, pasted_data_url)
+    staged = gather_staged_images(upload_list, pasted_data_url)
     if not staged:
         if pasted_data_url and not upload_list:
-            _dec, reason = _decode_data_url_image_verbose(pasted_data_url)
+            _dec, reason = decode_data_url_image_verbose(pasted_data_url)
             if reason:
                 st.warning(f"Không nhận được ảnh từ clipboard. Lý do: **{reason}**")
         st.warning("Không đọc được ảnh hợp lệ — chỉ hỗ trợ **JPG/PNG** (HEIC/HEIF cần export sang JPG).")
@@ -850,21 +242,18 @@ def main() -> None:
         st.error("Tối đa 50 ảnh mỗi lần (upload + dán tính chung). Vui lòng giảm số lượng và thử lại.")
         return
 
-    # Clipboard utilities
     c1, c2 = st.columns([1, 2], gap="small")
     with c1:
         if st.button("Xóa ảnh clipboard", width="content"):
-            # Reset by changing component key
             st.session_state["p2c_clipboard_paste_nonce"] = int(st.session_state.get("p2c_clipboard_paste_nonce", 0)) + 1
             st.rerun()
     with c2:
         if pasted_data_url:
-            dec = _decode_data_url_image(str(pasted_data_url))
+            dec = decode_data_url_image(str(pasted_data_url))
             if dec:
                 blob, fn = dec
                 st.success(f"Đã nhận ảnh từ clipboard: `{fn}` ({len(blob)/1024:.0f} KB).")
 
-    # Selection
     if "p2c_selected" not in st.session_state:
         st.session_state["p2c_selected"] = {}
     selected: Dict[str, bool] = st.session_state["p2c_selected"]
@@ -881,7 +270,7 @@ def main() -> None:
     with a3:
         st.caption("Bạn có thể bỏ chọn ảnh không muốn xử lý.")
 
-    _render_image_thumbnails(staged, selected)
+    render_image_thumbnails(staged, selected)
 
     st.markdown("### Xử lý hàng loạt")
     selected_n = sum(1 for i, (fname, _raw) in enumerate(staged) if selected.get(f"sel::{i}::{fname}", True))
@@ -898,7 +287,7 @@ def main() -> None:
         return
     st.session_state["p2c_stop"] = False
 
-    if replace_blue_bg and rembg_engine == "remove_bg_api" and not _read_remove_bg_api_key():
+    if replace_blue_bg and rembg_engine == "remove_bg_api" and not read_remove_bg_api_key():
         st.error(
             "Chế độ **remove.bg** cần API key. Trên Streamlit Cloud: **Settings → Secrets** thêm "
             "`REMOVEBG_API_KEY = \"...\"`. Local: biến môi trường cùng tên. "
@@ -907,20 +296,17 @@ def main() -> None:
         st.stop()
 
     remove_bg_key_for_processor = (
-        _read_remove_bg_api_key() if (replace_blue_bg and rembg_engine == "remove_bg_api") else None
+        read_remove_bg_api_key() if (replace_blue_bg and rembg_engine == "remove_bg_api") else None
     )
 
-    # Preflight: ensure OpenCV is importable before creating cached processor.
-    # If cv2 is missing, `st.cache_resource` would cache the exception and keep failing.
     try:
         import cv2  # type: ignore  # noqa: F401
     except Exception as e:
         st.error("Thiếu OpenCV (`cv2`) hoặc OpenCV không import được trong môi trường hiện tại.")
         st.code(str(e))
-        st.markdown(_cv2_troubleshoot_markdown())
+        st.markdown(cv2_troubleshoot_markdown())
         st.stop()
 
-    # Lazy init processor to avoid UI freeze on first load (mediapipe/rembg can take time).
     if not replace_blue_bg:
         _spin_engine = "MediaPipe"
     elif rembg_engine == "remove_bg_api":
@@ -929,7 +315,7 @@ def main() -> None:
         _spin_engine = f"MediaPipe + rembg ({rembg_model})"
     if lazy_init:
         with st.spinner(f"Đang khởi tạo engine ({_spin_engine})… lần đầu có thể mất 10–60 giây."):
-            processor = _get_processor(
+            processor = get_cached_portrait_processor(
                 ratio=ratio,
                 blue_rgb=blue_rgb,
                 min_face_conf=min_face_conf,
@@ -939,7 +325,7 @@ def main() -> None:
                 cache_version=APP_BUILD,
             )
     else:
-        processor = _get_processor(
+        processor = get_cached_portrait_processor(
             ratio=ratio,
             blue_rgb=blue_rgb,
             min_face_conf=min_face_conf,
@@ -949,19 +335,17 @@ def main() -> None:
             cache_version=APP_BUILD,
         )
 
-    # Filter selected items + basic validation limits
-    MAX_BYTES = 12 * 1024 * 1024  # ~12MB per image staged (post-clipboard compression typically smaller)
-    # Không chặn ảnh nhỏ: một số ảnh crop/scan vẫn dùng được; checklist sẽ tự đánh giá thêm.
+    MAX_BYTES = 12 * 1024 * 1024
     work_items: List[Tuple[str, bytes]] = []
     rejected: List[Tuple[str, str]] = []
     for i, (fname, raw) in enumerate(staged):
         if not selected.get(f"sel::{i}::{fname}", True):
             continue
-        fname_norm = _normalize_filename_hint(fname)
-        if _looks_like_heic(fname_norm, raw):
+        fname_norm = normalize_filename_hint(fname)
+        if looks_like_heic(fname_norm, raw):
             rejected.append((fname_norm, "Định dạng HEIC/HEIF chưa hỗ trợ — hãy Export/Save As **JPG** rồi upload lại."))
             continue
-        kind = _sniff_image_kind(raw)
+        kind = sniff_image_kind(raw)
         if kind is None:
             rejected.append((fname_norm, "File không giống ảnh hợp lệ (magic bytes không khớp JPG/PNG/GIF/WebP)."))
             continue
@@ -970,14 +354,10 @@ def main() -> None:
             continue
         try:
             im = Image.open(io.BytesIO(raw))
-            w, h = im.size
-            # Không reject theo kích thước; nếu quá nhỏ, face detection/checklist có thể FAIL sau.
             mode = (im.mode or "").upper()
             if mode in ("CMYK", "I;16", "I;16B", "I;16L", "I;16S", "I"):
-                # Vẫn xử lý được khi convert RGB, nhưng cảnh báo sớm để tránh màu sai.
                 rejected.append((fname_norm, f"Ảnh ở chế độ {mode} (có thể lệch màu). Hãy xuất lại **RGB JPG** nếu bị sai."))
                 continue
-            # verify then reopen later in pipeline
             im.verify()
         except Exception:
             rejected.append((fname_norm, "Không đọc được ảnh hoặc file không hợp lệ."))
@@ -1018,7 +398,7 @@ def main() -> None:
 
         with st.spinner(f"Đang xử lý: {filename}"):
             try:
-                res = _run_processor(
+                res = run_portrait_process(
                     processor,
                     pil,
                     prefer_face_crop=prefer_face_crop,
@@ -1053,9 +433,9 @@ def main() -> None:
                 if not res.errors and not res.warnings:
                     st.markdown('<div class="small-note muted">Không có cảnh báo.</div>', unsafe_allow_html=True)
 
-                checks_dict = _result_to_checks_dict(res)
+                checks_dict = result_to_checks_dict(res)
                 st.markdown("**Checklist**")
-                _render_checklist(checks_dict)
+                render_checklist(checks_dict)
 
             with c3:
                 st.markdown("**Processed**")
@@ -1064,8 +444,10 @@ def main() -> None:
                     failed_items.append({"file": filename, "reason": "Không tạo được ảnh đầu ra."})
                 else:
                     st.image(res.processed_image, width="stretch")
-                    _ensure_image_backend()
-                    out_bytes = pil_to_jpeg_bytes(res.processed_image, quality=95)
+                    ensure_image_backend()
+                    pj = backend_lazy.pil_to_jpeg_bytes
+                    assert pj is not None
+                    out_bytes = pj(res.processed_image, quality=95)
                     base = filename.rsplit(".", 1)[0] if "." in filename else filename
                     zip_name = f"{idx:03d}_{base}_chuanhoa.jpg"
                     dl_name = f"{base}_chuanhoa.jpg"
@@ -1091,7 +473,7 @@ def main() -> None:
         st.markdown("### Danh sách lỗi")
         st.dataframe(failed_items, use_container_width=True, hide_index=True)
     if processed_zip_items:
-        zip_bytes = _make_zip(processed_zip_items)
+        zip_bytes = make_zip(processed_zip_items)
         st.download_button(
             label=f"Download ZIP ({len(processed_zip_items)} ảnh)",
             data=zip_bytes,
