@@ -40,6 +40,18 @@ def _work_items_fingerprint(items: List[Tuple[str, bytes]]) -> Tuple[Tuple[str, 
     return tuple((fn, len(raw)) for fn, raw in items)
 
 
+def _pil_from_raw(raw: bytes) -> Image.Image | None:
+    try:
+        pil = Image.open(io.BytesIO(raw))
+        try:
+            pil = ImageOps.exif_transpose(pil)
+        except Exception:
+            pass
+        return pil.convert("RGB")
+    except Exception:
+        return None
+
+
 def main() -> None:
     st.set_page_config(
         page_title=APP_TITLE,
@@ -474,28 +486,97 @@ def main() -> None:
                 }
             )
         st.session_state["p2c_audit"] = {"fp": fp, "rows": rows_out}
+        st.session_state["p2c_outputs"] = {}
+        st.session_state.pop("p2c_last_failures", None)
         for row in rows_out:
             k = f"p2c_proc_{row['work_idx']}"
             if k not in st.session_state:
                 st.session_state[k] = row["status"] == "OK"
-        st.success(f"Đã kiểm tra **{len(rows_out)}** ảnh — chọn tick ở từng ảnh rồi bấm bước 2 nếu cần.")
+        st.success(f"Đã kiểm tra **{len(rows_out)}** ảnh — xem checklist từng ảnh; cột **Processed** chỉ có sau bước 2.")
         st.rerun()
 
+    failures_prev = st.session_state.get("p2c_last_failures")
+    if failures_prev:
+        st.warning("Lần xử lý trước có ảnh lỗi — kiểm tra cột **Processed** hoặc bảng dưới.")
+        st.dataframe(failures_prev, use_container_width=True, hide_index=True)
+
     if audit and audit.get("fp") == fp and not audit_stale:
-        st.markdown("#### Kết quả kiểm tra")
+        st.markdown("#### Kết quả kiểm tra (Original · Checklist · Processed)")
+        st.caption(
+            "Giữa: bảng **Đạt / Tiêu chí / Chi tiết** như ảnh mẫu. Phải: trống cho đến khi bạn chạy **bước 2**."
+        )
+        outputs_map: Dict[int, Any] = dict(st.session_state.get("p2c_outputs") or {})
         for row in audit["rows"]:
-            title = f"`{row['filename']}` — **{row['status']}** — {row['n_ok']}/{row['n_tot']} tiêu chí đạt"
-            with st.expander(title, expanded=False):
+            work_idx = row["work_idx"]
+            _fn, raw = work_items[work_idx]
+            pil_o = _pil_from_raw(raw)
+
+            st.markdown('<div class="card">', unsafe_allow_html=True)
+            c1, c2, c3 = st.columns([1.05, 1.05, 1.25], gap="large")
+            with c1:
+                st.markdown("**Original**")
+                st.caption(f"`{row['filename']}` · {row['n_ok']}/{row['n_tot']} đạt")
+                if pil_o is not None:
+                    st.image(pil_o, width="stretch")
+                else:
+                    st.caption("Không đọc được ảnh.")
+            with c2:
+                st.markdown("**Trạng thái / Cảnh báo**")
+                if row["status"] == "OK":
+                    st.markdown('<span class="badge-ok">OK</span>', unsafe_allow_html=True)
+                else:
+                    st.markdown('<span class="badge-fail">FAILED</span>', unsafe_allow_html=True)
                 if row["errors"]:
                     st.error("\n".join(row["errors"]))
                 if row["warnings"]:
                     st.warning("\n".join(row["warnings"]))
-                st.markdown("**Checklist (Đạt / Chưa đạt)**")
+                if not row["errors"] and not row["warnings"]:
+                    st.markdown('<div class="small-note muted">Không có cảnh báo.</div>', unsafe_allow_html=True)
+                st.markdown("**Checklist**")
                 render_checklist(row["checks_dict"])
+            with c3:
+                st.markdown("**Processed**")
+                rec = outputs_map.get(work_idx)
+                if rec and rec.get("jpg_bytes"):
+                    st.image(Image.open(io.BytesIO(rec["jpg_bytes"])), width="stretch")
+                    st.download_button(
+                        label="Download ảnh này (JPG)",
+                        data=rec["jpg_bytes"],
+                        file_name=rec.get("dl_name") or "chuanhoa.jpg",
+                        mime="image/jpeg",
+                        width="stretch",
+                        key=f"p2c_dl_jpg_{work_idx}",
+                    )
+                elif rec and rec.get("error"):
+                    st.error(rec["error"])
+                else:
+                    st.info(
+                        "Chưa có ảnh output — tick ô bên dưới và bấm **2. Xử lý ảnh đã tick** "
+                        "(tiết kiệm rembg / API)."
+                    )
+            st.markdown("</div>", unsafe_allow_html=True)
             st.checkbox(
                 "Chạy xử lý đầy đủ (crop / rembg / API) cho ảnh này",
-                key=f"p2c_proc_{row['work_idx']}",
-                help="Bỏ tick để không tốn rembg hoặc quota remove.bg.",
+                key=f"p2c_proc_{work_idx}",
+                help="Bỏ tick để bỏ qua ảnh này ở bước 2.",
+            )
+
+        zip_ready = [
+            (rec["zip_name"], rec["jpg_bytes"])
+            for wi, rec in sorted(outputs_map.items(), key=lambda x: x[0])
+            if rec.get("jpg_bytes")
+        ]
+        if zip_ready:
+            st.markdown("### Tải về toàn bộ")
+            st.caption(f"**{len(zip_ready)}** ảnh đã có output — đóng gói ZIP.")
+            zip_bytes = make_zip(zip_ready)
+            st.download_button(
+                label=f"Download ZIP ({len(zip_ready)} ảnh)",
+                data=zip_bytes,
+                file_name="anh_chan_dung_chuan_hoa.zip",
+                mime="application/zip",
+                type="primary",
+                key="p2c_dl_zip_audit_view",
             )
 
     if run_full:
@@ -521,26 +602,25 @@ def main() -> None:
                 processor = _get_processor()
                 status_line = st.empty()
                 progress = st.progress(0)
-                processed_zip_items: List[Tuple[str, bytes]] = []
                 failed_items: List[Dict[str, str]] = []
+                out_map: Dict[int, Any] = dict(st.session_state.get("p2c_outputs") or {})
+                for wi in chosen_idx:
+                    out_map.pop(wi, None)
                 n_ch = len(chosen_idx)
+                n_ok = 0
                 for j, work_idx in enumerate(chosen_idx, start=1):
                     if st.session_state.get("p2c_stop"):
-                        st.warning("Đã dừng. Bạn có thể bấm lại **2. Xử lý ảnh đã tick**.")
+                        st.warning("Đã dừng. Kết quả từng ảnh đã xử lý được giữ ở cột Processed.")
                         break
                     filename, raw = work_items[work_idx]
                     status_line.caption(f"Đang xử lý **{j}/{n_ch}** (ảnh đã tick): `{filename}`")
                     progress.progress(min(100, int((j - 1) / max(n_ch, 1) * 100)))
-                    try:
-                        pil = Image.open(io.BytesIO(raw))
-                        try:
-                            pil = ImageOps.exif_transpose(pil)
-                        except Exception:
-                            pass
-                        pil = pil.convert("RGB")
-                    except Exception:
-                        st.error(f"Không đọc được ảnh: `{filename}`")
-                        failed_items.append({"file": filename, "reason": "Không đọc được ảnh."})
+                    pil = _pil_from_raw(raw)
+                    if pil is None:
+                        msg = "Không đọc được ảnh."
+                        st.error(f"{filename}: {msg}")
+                        failed_items.append({"file": filename, "reason": msg})
+                        out_map[work_idx] = {"error": msg}
                         continue
                     with st.spinner(f"Đang xử lý: {filename}"):
                         try:
@@ -558,71 +638,34 @@ def main() -> None:
                         except RuntimeError as e:
                             st.error(str(e))
                             failed_items.append({"file": filename, "reason": str(e)})
+                            out_map[work_idx] = {"error": str(e)}
                             continue
-                    with st.container():
-                        st.markdown('<div class="card">', unsafe_allow_html=True)
-                        c1, c2, c3 = st.columns([1.05, 1.05, 1.25], gap="large")
-                        with c1:
-                            st.markdown("**Original**")
-                            st.image(pil, caption=filename, width="stretch")
-                        with c2:
-                            st.markdown("**Trạng thái / Cảnh báo**")
-                            if res.status == "OK":
-                                st.markdown('<span class="badge-ok">OK</span>', unsafe_allow_html=True)
-                            else:
-                                st.markdown('<span class="badge-fail">FAILED</span>', unsafe_allow_html=True)
-                            if res.errors:
-                                st.error("\n".join(res.errors))
-                            if res.warnings:
-                                st.warning("\n".join(res.warnings))
-                            if not res.errors and not res.warnings:
-                                st.markdown('<div class="small-note muted">Không có cảnh báo.</div>', unsafe_allow_html=True)
-                            checks_dict = result_to_checks_dict(res)
-                            st.markdown("**Checklist**")
-                            render_checklist(checks_dict)
-                        with c3:
-                            st.markdown("**Processed**")
-                            if res.processed_image is None:
-                                st.info("Không tạo được ảnh đầu ra.")
-                                failed_items.append({"file": filename, "reason": "Không tạo được ảnh đầu ra."})
-                            else:
-                                st.image(res.processed_image, width="stretch")
-                                ensure_image_backend()
-                                pj = backend_lazy.pil_to_jpeg_bytes
-                                assert pj is not None
-                                out_bytes = pj(res.processed_image, quality=95)
-                                base = filename.rsplit(".", 1)[0] if "." in filename else filename
-                                zip_name = f"{j:03d}_{base}_chuanhoa.jpg"
-                                dl_name = f"{base}_chuanhoa.jpg"
-                                processed_zip_items.append((zip_name, out_bytes))
-                                st.download_button(
-                                    label="Download ảnh này (JPG)",
-                                    data=out_bytes,
-                                    file_name=dl_name,
-                                    mime="image/jpeg",
-                                    width="stretch",
-                                    key=f"dl_full_{work_idx}_{j}",
-                                )
-                        st.markdown("</div>", unsafe_allow_html=True)
+                    if res.processed_image is None:
+                        msg = "Không tạo được ảnh đầu ra."
+                        failed_items.append({"file": filename, "reason": msg})
+                        out_map[work_idx] = {"error": msg}
+                        continue
+                    ensure_image_backend()
+                    pj = backend_lazy.pil_to_jpeg_bytes
+                    assert pj is not None
+                    out_bytes = pj(res.processed_image, quality=95)
+                    base = filename.rsplit(".", 1)[0] if "." in filename else filename
+                    zip_name = f"{j:03d}_{base}_chuanhoa.jpg"
+                    dl_name = f"{base}_chuanhoa.jpg"
+                    out_map[work_idx] = {
+                        "jpg_bytes": out_bytes,
+                        "zip_name": zip_name,
+                        "dl_name": dl_name,
+                    }
+                    n_ok += 1
                 progress.progress(100)
-                st.markdown("### Tải về toàn bộ")
-                ok_n = len(processed_zip_items)
-                st.markdown(f"**Đã xử lý:** thành công **{ok_n}** / {n_ch} ảnh đã tick.")
+                st.session_state["p2c_outputs"] = out_map
                 if failed_items:
-                    st.markdown("### Danh sách lỗi")
-                    st.dataframe(failed_items, use_container_width=True, hide_index=True)
-                if processed_zip_items:
-                    zip_bytes = make_zip(processed_zip_items)
-                    st.download_button(
-                        label=f"Download ZIP ({len(processed_zip_items)} ảnh)",
-                        data=zip_bytes,
-                        file_name="anh_chan_dung_chuan_hoa.zip",
-                        mime="application/zip",
-                        type="primary",
-                        key="dl_zip_all",
-                    )
-                elif chosen_idx and not st.session_state.get("p2c_stop"):
-                    st.warning("Không có ảnh nào xuất thành công để đóng ZIP.")
+                    st.session_state["p2c_last_failures"] = failed_items
+                else:
+                    st.session_state.pop("p2c_last_failures", None)
+                st.success(f"Đã xử lý xong **{n_ok}/{n_ch}** ảnh đã tick — xem cột **Processed** và nút ZIP phía trên.")
+                st.rerun()
     else:
         st.caption("Bấm **1. Kiểm tra ảnh** để xem checklist; chỉ bấm **2** cho ảnh bạn đã tick.")
 
