@@ -29,11 +29,23 @@ Phiên bản hiển thị trên UI xem `APP_BUILD` trong `frontend/config.py`.
    git pull
    ```
 
-4. Chạy:
+4. Chạy **một trong hai** cách:
 
-   ```powershell
-   .\host\run-local.ps1
-   ```
+   - **Khuyến nghị** (không cần đổi chính sách PowerShell):
+
+     ```powershell
+     .\host\run-local.cmd
+     ```
+
+   - Hoặc gọi trực tiếp `.ps1` với Bypass:
+
+     ```powershell
+     powershell -NoProfile -ExecutionPolicy Bypass -File .\host\run-local.ps1
+     ```
+
+   Nếu báo *running scripts is disabled*, **đừng** bắt buộc dùng `.\host\run-local.ps1` — dùng `run-local.cmd` hoặc dòng `powershell -ExecutionPolicy Bypass ...` ở trên.
+
+   (Tuỳ chọn vĩnh viễn cho user hiện tại: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` rồi mới chạy `.\host\run-local.ps1`.)
 
 5. Trình duyệt mở **http://localhost:8501** (hoặc mở tay URL đó).
 
@@ -103,6 +115,7 @@ Trong repo có `.streamlit/config.toml` (`maxUploadSize`, …). Trên máy bạn
 
 | File | Mục đích |
 |------|----------|
+| `run-local.cmd` | Windows: gọi `.ps1` với `-ExecutionPolicy Bypass` (tránh lỗi script disabled) |
 | `run-local.ps1` | Windows: venv + cài deps + Streamlit |
 | `run-local.sh` | macOS/Linux: tương tự |
 | `Dockerfile` | Ảnh Docker Python 3.12 + deps |
