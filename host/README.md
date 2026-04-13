@@ -106,7 +106,7 @@ Trong repo có `.streamlit/config.toml` (`maxUploadSize`, …). Trên máy bạn
 |--------|--------|
 | `python` không nhận | Cài Python 3.12, bật PATH, mở lại terminal. |
 | Thiếu OpenCV | Trong venv: `pip install opencv-python-headless` |
-| MediaPipe / rembg lỗi trên 3.13 | Dùng Python 3.12 hoặc `requirements-local-py313.txt` |
+| MediaPipe / rembg / **numpy crash** (Python 3.13) | `requirements.txt` đã ghim `numpy>=2.1.3`; chạy lại `pip install -r requirements.txt`. Khuyến nghị cài [Python 3.12](https://www.python.org/downloads/) và để `run-local.ps1` tự tạo venv bằng `py -3.12`. |
 | Port 8501 đã dùng | Đổi port: `streamlit run app.py --server.port 8502` (hoặc sửa tương tự trong `run-local.ps1` / `run-local.sh`) |
 
 ---

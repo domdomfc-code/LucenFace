@@ -12,8 +12,13 @@ VENV_PY="${REPO_ROOT}/.venv/bin/python"
 VENV_PIP="${REPO_ROOT}/.venv/bin/pip"
 
 if [[ ! -x "${VENV_PY}" ]]; then
-  echo "Tạo venv .venv ..."
-  python3 -m venv .venv
+  if command -v python3.12 &>/dev/null; then
+    echo "Tạo venv bằng python3.12 (khuyến nghị) ..."
+    python3.12 -m venv .venv
+  else
+    echo "Tạo venv .venv (python3) ..."
+    python3 -m venv .venv
+  fi
 fi
 
 echo "Cài requirements.txt (có thể vài phút)..."
