@@ -699,7 +699,7 @@ def _compute_crop_rect(
 
 
 def _median_corner_fill_bgr(bgr: np.ndarray) -> Tuple[int, int, int]:
-    """Màu nền letterbox: trung vị các pixel góc (gần phông)."""
+    """Fallback màu letterbox: trung vị pixel góc (khi không suy ra được vùng viền OOB)."""
     h, w = bgr.shape[:2]
     k = max(2, min(h, w) // 24)
     patches = (
@@ -711,6 +711,48 @@ def _median_corner_fill_bgr(bgr: np.ndarray) -> Tuple[int, int, int]:
     flat = np.concatenate([p.reshape(-1, 3) for p in patches], axis=0).astype(np.float32)
     if flat.size < 9:
         return (245, 248, 252)
+    med = np.median(flat, axis=0)
+    return int(med[0]), int(med[1]), int(med[2])
+
+
+def _letterbox_fill_bgr_for_ideal_rect(
+    bgr: np.ndarray,
+    x1: float,
+    y1: float,
+    x2: float,
+    y2: float,
+) -> Tuple[int, int, int]:
+    """
+    Màu lấp viền: chỉ lấy mẫu từ các **cạnh ảnh gốc** tương ứng chỗ thực sự thiếu pixel
+    (khung ideal tràn ra ngoài). Tránh góc dưới (áo/vai) làm sáng cả vùng lấp phía trên.
+    """
+    h, w = bgr.shape[:2]
+    if h < 2 or w < 2:
+        return _median_corner_fill_bgr(bgr)
+
+    k = max(2, min(h, w) // 24)
+    k = min(k, max(1, h // 2), max(1, w // 2))
+
+    chunks: List[np.ndarray] = []
+    if y1 < 0.0:
+        kh = min(k, h)
+        chunks.append(bgr[0:kh, :].reshape(-1, 3))
+    if y2 > float(h):
+        kh = min(k, h)
+        chunks.append(bgr[h - kh : h, :].reshape(-1, 3))
+    if x1 < 0.0:
+        kw = min(k, w)
+        chunks.append(bgr[:, 0:kw].reshape(-1, 3))
+    if x2 > float(w):
+        kw = min(k, w)
+        chunks.append(bgr[:, w - kw : w].reshape(-1, 3))
+
+    if not chunks:
+        return _median_corner_fill_bgr(bgr)
+
+    flat = np.concatenate(chunks, axis=0).astype(np.float32)
+    if flat.shape[0] < 3:
+        return _median_corner_fill_bgr(bgr)
     med = np.median(flat, axis=0)
     return int(med[0]), int(med[1]), int(med[2])
 
@@ -1732,7 +1774,9 @@ def process_portrait_image(
         )
         use_letterbox = bool(letterbox_smart_framing) and (oob or extreme_dims)
         if use_letterbox:
-            fill_bgr = _median_corner_fill_bgr(bgr0)
+            fill_bgr = _letterbox_fill_bgr_for_ideal_rect(
+                bgr0, ideal[0], ideal[1], ideal[2], ideal[3]
+            )
             cropped = _crop_rect_with_edge_fill(bgr0, ideal[0], ideal[1], ideal[2], ideal[3], fill_bgr)
             lb_note = []
             if oob:
