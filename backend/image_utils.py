@@ -469,6 +469,53 @@ def _rembg_model_skip_pymatting(model: str) -> bool:
     return m != "u2net"
 
 
+def _estimate_spill_background_rgb(
+    r: np.ndarray,
+    g: np.ndarray,
+    b: np.ndarray,
+    a: np.ndarray,
+) -> Tuple[float, float, float]:
+    """
+    Màu nền studio trên ảnh gốc (không phải màu xanh đích) để khử fringe đúng hơn.
+    Ưu tiên pixel rembg đánh dấu nền (alpha thấp); không đủ mẫu thì trung vị các góc.
+    """
+    mask = a < 48
+    n = int(np.count_nonzero(mask))
+    min_n = max(80, max(1, r.size) // 400)
+    if n >= min_n:
+        return (
+            float(np.median(r[mask])),
+            float(np.median(g[mask])),
+            float(np.median(b[mask])),
+        )
+    h, w = r.shape[:2]
+    k = max(2, min(h, w) // 20)
+    k = min(k, max(1, h // 2), max(1, w // 2))
+    pr = (
+        r[0:k, 0:k].ravel(),
+        r[0:k, w - k : w].ravel(),
+        r[h - k : h, 0:k].ravel(),
+        r[h - k : h, w - k : w].ravel(),
+    )
+    pg = (
+        g[0:k, 0:k].ravel(),
+        g[0:k, w - k : w].ravel(),
+        g[h - k : h, 0:k].ravel(),
+        g[h - k : h, w - k : w].ravel(),
+    )
+    pb = (
+        b[0:k, 0:k].ravel(),
+        b[0:k, w - k : w].ravel(),
+        b[h - k : h, 0:k].ravel(),
+        b[h - k : h, w - k : w].ravel(),
+    )
+    return (
+        float(np.median(np.concatenate(pr))),
+        float(np.median(np.concatenate(pg))),
+        float(np.median(np.concatenate(pb))),
+    )
+
+
 def _decontaminate_straight_alpha_rgb(
     r: np.ndarray,
     g: np.ndarray,
@@ -479,6 +526,7 @@ def _decontaminate_straight_alpha_rgb(
     """
     rembg trả RGBA straight alpha: mép thường nhiễm màu nền (xanh/viền halo).
     Ước lượng màu foreground thật: Cf = (C - Cbg*(1-a)) / max(a, eps).
+    `bg_rgb` nên là màu **nền gốc trên ảnh** (spill), khớp với màu đích khi hai màu giống nhau.
     Chỉ áp vùng alpha > 12 để tránh nổ số.
     """
     br, bg_c, bb = float(bg_rgb[0]), float(bg_rgb[1]), float(bg_rgb[2])
@@ -497,6 +545,19 @@ def _decontaminate_straight_alpha_rgb(
     g_out = np.where(safe, g2, gf).astype(np.uint8)
     b_out = np.where(safe, b2, bf_c).astype(np.uint8)
     return r_out, g_out, b_out
+
+
+def _shrink_alpha_hard_fringe_u8(alpha: np.ndarray, iterations: int = 1) -> np.ndarray:
+    """
+    Co nhẹ vùng alpha (erosion) khi không dùng pymatting — cắt ~1px viền sáng còn sót.
+    `iterations=1` với kernel 3×3: trade-off với tóc mảnh; chấp nhận được với ảnh thẻ.
+    """
+    _require_cv2()
+    if alpha.ndim != 2:
+        alpha = alpha.squeeze()
+    it = max(1, min(2, int(iterations)))
+    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    return cv2.erode(alpha, k, iterations=it)
 
 
 def _mask_subject_ok(alpha: np.ndarray) -> Tuple[bool, str]:
@@ -1028,9 +1089,12 @@ def _remove_bg_and_compose_blue(
     Ảnh sáng: tắt matting (tránh tối da). Ảnh tối: tắt matting + boost đầu vào — alpha matting
     dễ làm rách/lỗ mặt nạ khi tương phản thấp.
     Nếu có `selfie_for_alpha`: kết hợp max alpha với MediaPipe Selfie (chỉ rembg local).
+
+    Viền sáng/halo: ước màu nền gốc từ ảnh + khử spill trước khi ghép; rembg không pymatting thì co alpha 1px.
     """
     inp_pil = pil_segmentation if pil_segmentation is not None else pil_rgb
     api_mode = bool(remove_bg_api_key and str(remove_bg_api_key).strip())
+    used_pymatting_local = False
 
     if api_mode:
         fg = _remove_bg_via_remove_bg_api(inp_pil, str(remove_bg_api_key).strip())
@@ -1049,6 +1113,7 @@ def _remove_bg_and_compose_blue(
         if high_key_photo or low_light or not use_pymatting:
             out = remove(inp, session=session, alpha_matting=False)
         else:
+            used_pymatting_local = True
             out = remove(
                 inp,
                 session=session,
@@ -1079,11 +1144,20 @@ def _remove_bg_and_compose_blue(
     )
     if low_light and selfie_for_alpha is not None and not api_mode:
         a_np = _merge_rembg_alpha_with_selfie(a_np, pil_rgb, selfie_for_alpha)
+    # Không pymatting: mép cứng dễ sót 1–2px nền sáng — co alpha nhẹ (ảnh thẻ chấp nhận được).
+    if (not api_mode) and (not used_pymatting_local):
+        a_np = _shrink_alpha_hard_fringe_u8(a_np, iterations=1)
     mask_ok, _ = _mask_subject_ok(a_np)
     r_arr = np.array(r_src)
     g_arr = np.array(g_src)
     b_arr = np.array(b_src)
-    r_arr, g_arr, b_arr = _decontaminate_straight_alpha_rgb(r_arr, g_arr, b_arr, a_np, blue_rgb)
+    spill = _estimate_spill_background_rgb(r_arr, g_arr, b_arr, a_np)
+    spill_rgb = (
+        int(round(_clamp(spill[0], 0, 255))),
+        int(round(_clamp(spill[1], 0, 255))),
+        int(round(_clamp(spill[2], 0, 255))),
+    )
+    r_arr, g_arr, b_arr = _decontaminate_straight_alpha_rgb(r_arr, g_arr, b_arr, a_np, spill_rgb)
     r_src = Image.fromarray(r_arr, mode="L")
     g_src = Image.fromarray(g_arr, mode="L")
     b_src = Image.fromarray(b_arr, mode="L")
