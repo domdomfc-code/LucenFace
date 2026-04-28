@@ -4,10 +4,8 @@ Chạy từ gốc dự án: `streamlit run app.py` (khuyến nghị) hoặc `str
 """
 from __future__ import annotations
 
-import base64
 import io
 import platform
-from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 import streamlit as st
@@ -54,48 +52,18 @@ def _pil_from_raw(raw: bytes) -> Image.Image | None:
         return None
 
 
-def _brand_logo_path() -> Path:
-    return Path(__file__).resolve().parent / "assets" / "lucenface-logo.png"
-
-
-def _brand_logo_data_uri() -> str | None:
-    p = _brand_logo_path()
-    if not p.is_file():
-        return None
-    b64 = base64.b64encode(p.read_bytes()).decode("ascii")
-    return f"data:image/png;base64,{b64}"
-
-
 def main() -> None:
-    _logo_p = _brand_logo_path()
-    _page_icon: str = str(_logo_p) if _logo_p.is_file() else "🪪"
     st.set_page_config(
         page_title=APP_TITLE,
-        page_icon=_page_icon,
+        page_icon="🪪",
         layout="wide",
         initial_sidebar_state="expanded",
     )
     inject_app_css()
     render_sidebar_reopen_button()
 
-    _logo_uri = _brand_logo_data_uri()
-    if _logo_uri:
-        _brand_html = f"""
-        <div class="topbar">
-          <div class="brand brand-with-logo">
-            <img class="brand-logo-img" src="{_logo_uri}" alt="LucenFace — Chuẩn hóa hình ảnh khuôn mặt" />
-            <div class="brand-meta">
-              <div class="brand-sub">Portrait Standardizer • Build {APP_BUILD}</div>
-            </div>
-          </div>
-          <div class="top-actions">
-            <span class="pill">Batch ≤ 50 ảnh</span>
-            <span class="pill">Nền xanh (tùy chọn)</span>
-          </div>
-        </div>
-        """
-    else:
-        _brand_html = f"""
+    st.markdown(
+        f"""
         <div class="topbar">
           <div class="brand">
             <div class="brand-badge"></div>
@@ -104,13 +72,14 @@ def main() -> None:
               <div class="brand-sub">Portrait Standardizer • Build {APP_BUILD}</div>
             </div>
           </div>
-          <div class="top-actions">
+            <div class="top-actions">
             <span class="pill">Batch ≤ 50 ảnh</span>
             <span class="pill">Nền xanh (tùy chọn)</span>
           </div>
         </div>
-        """
-    st.markdown(_brand_html, unsafe_allow_html=True)
+        """,
+        unsafe_allow_html=True,
+    )
 
     st.markdown(f'<div class="app-title">{APP_TITLE}</div>', unsafe_allow_html=True)
     st.markdown(
@@ -119,8 +88,6 @@ def main() -> None:
     )
 
     with st.sidebar:
-        if _logo_p.is_file():
-            st.image(str(_logo_p), use_container_width=True)
         st.caption(f"**Build:** `{APP_BUILD}` — UI `frontend/`, xử lý `backend/`")
         with st.expander("Kiểm tra thư viện", expanded=False):
             st.write(f"**Python:** `{platform.python_version()}` — **HĐH:** `{platform.system()}`")

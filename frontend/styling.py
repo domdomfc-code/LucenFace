@@ -75,27 +75,6 @@ def inject_app_css() -> None:
             background: linear-gradient(135deg, var(--blue), #38bdf8);
             box-shadow: 0 10px 22px rgba(0,91,196,0.20);
           }}
-          .brand-with-logo {{
-            align-items: center;
-            gap: 12px;
-            flex-wrap: wrap;
-            min-width: 0;
-          }}
-          .brand-logo-img {{
-            max-height: 52px;
-            width: auto;
-            max-width: min(100%, 360px);
-            object-fit: contain;
-            display: block;
-            border-radius: 8px;
-          }}
-          .brand-meta {{
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            gap: 2px;
-            min-width: 0;
-          }}
           .brand-title {{
             font-size: 1.05rem;
             line-height: 1.1;
