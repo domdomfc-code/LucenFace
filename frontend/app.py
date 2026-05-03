@@ -15,6 +15,7 @@ import frontend.bootstrap  # noqa: F401 — đưa thư mục gốc dự án vào
 from frontend import backend_lazy
 from frontend.backend_lazy import ensure_image_backend
 from frontend.config import APP_BUILD, APP_TITLE, BLUE
+from frontend.deploy_info import git_short_sha, is_streamlit_cloud
 from frontend.image_io import (
     decode_data_url_image,
     decode_data_url_image_verbose,
@@ -62,6 +63,12 @@ def main() -> None:
     inject_app_css()
     render_sidebar_reopen_button()
 
+    _git = git_short_sha()
+    _where = "Cloud" if is_streamlit_cloud() else "Local"
+    _rev_line = f"Build {APP_BUILD}"
+    if _git:
+        _rev_line += f" · Git {_git}"
+
     st.markdown(
         f"""
         <div class="topbar">
@@ -69,7 +76,7 @@ def main() -> None:
             <div class="brand-badge"></div>
             <div>
               <div class="brand-title">LucenFace</div>
-              <div class="brand-sub">Portrait Standardizer • Build {APP_BUILD}</div>
+              <div class="brand-sub">Portrait Standardizer • {_rev_line} · {_where}</div>
             </div>
           </div>
             <div class="top-actions">
@@ -88,7 +95,23 @@ def main() -> None:
     )
 
     with st.sidebar:
-        st.caption(f"**Build:** `{APP_BUILD}` — UI `frontend/`, xử lý `backend/`")
+        _cap = f"**Build:** `{APP_BUILD}` · **Chạy:** {_where}"
+        if _git:
+            _cap += f" · **Git:** `{_git}`"
+        _cap += " — UI `frontend/`, xử lý `backend/`"
+        st.caption(_cap)
+        with st.expander("Đối chiếu bản deploy", expanded=False):
+            st.markdown(
+                """
+                - **Git** (nếu hiện): so với commit trên GitHub (`main`) — trùng 7 ký tự đầu là đúng bản.
+                - **Build**: từ `frontend/config.py` (`APP_BUILD`) — tăng khi muốn thấy rõ lần deploy mới.
+                - Trên **Streamlit Cloud**: **Manage app** → xem thời gian deploy / **Reboot** nếu nghi cache.
+                """
+            )
+            if _git:
+                st.code(_git, language="text")
+            else:
+                st.caption("Không đọc được Git SHA (bình thường nếu không có `.git` trên máy).")
         with st.expander("Kiểm tra thư viện", expanded=False):
             st.write(f"**Python:** `{platform.python_version()}` — **HĐH:** `{platform.system()}`")
             try:

@@ -82,6 +82,14 @@ Thay `<TAI_KHOAN>` và `<TEN_REPO>` bằng đúng của bạn. Nếu dùng SSH, 
 
 **Lưu ý:** `.gitignore` đã bỏ qua `venv/`, `__pycache__/` — không đẩy môi trường ảo lên GitHub.
 
+## Kiểm tra app Streamlit đã đúng bản code mới
+
+1. Mở app → **sidebar** xem **Build** (`APP_BUILD` trong `frontend/config.py`) và **Git** (7 ký tự đầu của commit, nếu Cloud có `.git`).
+2. So sánh Git đó với repo GitHub (commit mới nhất trên nhánh deploy) — khớp thì đang chạy đúng commit.
+3. Trên [Streamlit Cloud](https://share.streamlit.io/) → **Manage app** → xem lịch sử deploy / nút **Reboot** khi nghi bản cũ.
+4. Trình duyệt: **Ctrl+F5** (hard refresh) tránh cache.
+5. Mỗi lần muốn “thấy rõ” có deploy mới: tăng / đổi chuỗi **`APP_BUILD`** trong `frontend/config.py` rồi push (topbar và sidebar đều hiện).
+
 ## Chạy trên Streamlit Community Cloud
 
 1. Vào [Streamlit Community Cloud](https://share.streamlit.io/) và đăng nhập GitHub.
