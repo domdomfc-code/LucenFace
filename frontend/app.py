@@ -18,7 +18,7 @@ from PIL import Image, ImageDraw, ImageOps
 import frontend.bootstrap  # noqa: F401 — đưa thư mục gốc dự án vào sys.path
 from frontend import backend_lazy
 from frontend.backend_lazy import ensure_image_backend
-from frontend.config import APP_BUILD, APP_TITLE, BG, BLUE
+from frontend.config import APP_BUILD, APP_TITLE, BLUE
 from frontend.deploy_info import git_short_sha, is_streamlit_cloud
 from frontend.image_io import (
     decode_data_url_image,
@@ -73,20 +73,15 @@ def _pil_to_square_thumb(im: Image.Image, size: int) -> Image.Image:
     return im.resize((size, size), _resample)
 
 
-def _hex_rgb(hex_color: str) -> tuple[int, int, int]:
-    h = hex_color.strip().lstrip("#")
-    return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
-
-
 def _pil_rounded_square_on_bg(im: Image.Image, *, radius: int | None = None) -> Image.Image:
-    """Bo góc trong pixel (iframe component thường không nhận CSS border-radius)."""
+    """Bo góc trong pixel; nền góc trắng (giống remove.bg, tránh vệt xám trên ảnh nền sáng)."""
     im = im.convert("RGB")
     w, h = im.size
     r = radius if radius is not None else max(10, min(w, h) // 6)
     r = min(r, min(w, h) // 2)
     mask = Image.new("L", (w, h), 0)
     ImageDraw.Draw(mask).rounded_rectangle((0, 0, w, h), radius=r, fill=255)
-    out = Image.new("RGB", (w, h), _hex_rgb(BG))
+    out = Image.new("RGB", (w, h), (255, 255, 255))
     out.paste(im, (0, 0), mask=mask)
     return out
 
@@ -105,52 +100,51 @@ def _sample_src_for_click_widget(row: Any) -> Any:
 
 
 def _render_try_sample_demos() -> None:
-    """Ô đen trái + 4 ảnh mẫu nhỏ vuông cùng một hàng (cột phải đủ rộng, width cố định)."""
-    c_left, c_right = st.columns([1.05, 2.95], gap="medium")
-    with c_left:
+    """Kiểu remove.bg: chữ phẳng bên trái + hàng ảnh mẫu (không ô nền tối)."""
+    n = len(SAMPLE_DEMOS)
+    cols = st.columns([2.15] + [1.0] * n, gap="large")
+    with cols[0]:
         st.markdown(
             """
-<div class="p2c-try-inner">
-  <p class="p2c-try-title">Chưa có ảnh?</p>
-  <p class="p2c-try-sub">Bấm <strong>trực tiếp vào từng ảnh mẫu</strong> bên phải để thêm vào danh sách xử lý.</p>
+<div class="p2c-try-light">
+  <p class="p2c-try-light-title">Chưa có ảnh?</p>
+  <p class="p2c-try-light-sub">Thử một trong các ảnh sau — <strong>bấm trực tiếp vào ảnh</strong> để thêm vào danh sách.</p>
 </div>
 """,
             unsafe_allow_html=True,
         )
-    with c_right:
-        thumbs = st.columns(len(SAMPLE_DEMOS), gap="small")
-        for i, row in enumerate(SAMPLE_DEMOS):
-            with thumbs[i]:
-                st.markdown(
-                    '<div class="p2c-sample-thumb-marker" aria-hidden="true"></div>',
-                    unsafe_allow_html=True,
+    for i, row in enumerate(SAMPLE_DEMOS):
+        with cols[i + 1]:
+            st.markdown(
+                '<div class="p2c-sample-thumb-marker" aria-hidden="true"></div>',
+                unsafe_allow_html=True,
+            )
+            _prev_key = f"p2c_sample_click_prev_{i}"
+            _coord_key = f"p2c_sample_coord_{i}"
+            try:
+                _click = streamlit_image_coordinates(
+                    _sample_src_for_click_widget(row),
+                    key=_coord_key,
+                    width=_SAMPLE_THUMB_PX,
+                    use_column_width="never",
+                    cursor="pointer",
                 )
-                _prev_key = f"p2c_sample_click_prev_{i}"
-                _coord_key = f"p2c_sample_coord_{i}"
-                try:
-                    _click = streamlit_image_coordinates(
-                        _sample_src_for_click_widget(row),
-                        key=_coord_key,
-                        width=_SAMPLE_THUMB_PX,
-                        use_column_width="never",
-                        cursor="pointer",
-                    )
-                except Exception as e:
-                    st.caption("Không hiển thị ảnh tương tác")
-                    st.code(str(e))
-                    continue
-                if _click:
-                    _sig = json.dumps(_click, sort_keys=True, default=str)
-                    if _sig != st.session_state.get(_prev_key):
-                        st.session_state[_prev_key] = _sig
-                        try:
-                            raw = load_demo_image_bytes(row)
-                            st.session_state.setdefault("p2c_demo_staged", []).append(
-                                (row["filename"], raw)
-                            )
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Không tải được ảnh mẫu: {e}")
+            except Exception as e:
+                st.caption("Không hiển thị ảnh tương tác")
+                st.code(str(e))
+                continue
+            if _click:
+                _sig = json.dumps(_click, sort_keys=True, default=str)
+                if _sig != st.session_state.get(_prev_key):
+                    st.session_state[_prev_key] = _sig
+                    try:
+                        raw = load_demo_image_bytes(row)
+                        st.session_state.setdefault("p2c_demo_staged", []).append(
+                            (row["filename"], raw)
+                        )
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Không tải được ảnh mẫu: {e}")
     st.markdown(
         '<p class="p2c-try-disclaimer">'
         "Ảnh mẫu cấu hình trong <code>frontend/sample_images.py</code> (file trong repo hoặc URL). "

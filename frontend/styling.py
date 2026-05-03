@@ -281,33 +281,32 @@ def inject_app_css() -> None:
             border: 1px solid rgba(0, 91, 196, 0.2);
           }}
 
-          /* Một hàng: ô đen trái + 4 thumbnail vuông nhỏ bên phải */
-          div[data-testid="stHorizontalBlock"]:has(.p2c-try-inner):has(.p2c-sample-thumb-marker) {{
+          /* Hàng ảnh mẫu kiểu remove.bg: chữ phẳng + thumbnail */
+          div[data-testid="stHorizontalBlock"]:has(.p2c-try-light):has(.p2c-sample-thumb-marker) {{
             align-items: center !important;
           }}
-          .p2c-try-inner {{
-            background: #27272a;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 14px;
-            padding: 0.95rem 1rem;
-            min-height: 5.5rem;
+          .p2c-try-light {{
             display: flex;
             flex-direction: column;
             justify-content: center;
+            min-height: 88px;
+            padding: 0.2rem 0.75rem 0.2rem 0;
           }}
-          .p2c-try-inner .p2c-try-title {{
-            color: #f4f4f5;
-            font-size: 1.05rem;
-            font-weight: 900;
+          .p2c-try-light-title {{
+            margin: 0 0 0.25rem 0;
+            font-size: 1.25rem;
+            font-weight: 800;
+            color: var(--text);
             letter-spacing: -0.02em;
-            margin: 0 0 0.35rem 0;
+            line-height: 1.15;
           }}
-          .p2c-try-inner .p2c-try-sub {{
-            color: #a1a1aa;
-            font-size: 0.84rem;
-            font-weight: 600;
+          .p2c-try-light-sub {{
             margin: 0;
-            line-height: 1.45;
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: var(--muted);
+            line-height: 1.4;
+            max-width: 22rem;
           }}
           /* Ảnh mẫu: bo góc rõ — overflow trên wrapper để iframe bị clip đúng hình */
           section.main [data-testid="column"]:has(.p2c-sample-thumb-marker) [data-testid="stIFrame"] {{
