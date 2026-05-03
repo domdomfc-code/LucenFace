@@ -25,7 +25,7 @@ from frontend.image_io import (
     sniff_image_kind,
 )
 from frontend.processor_service import get_cached_portrait_processor, run_portrait_process
-from frontend.sample_images import SAMPLE_DEMOS, fetch_demo_bytes
+from frontend.sample_images import SAMPLE_DEMOS, load_demo_image_bytes, sample_image_for_display
 from frontend.streamlit_helpers import (
     cv2_troubleshoot_markdown,
     make_zip,
@@ -71,7 +71,7 @@ def _render_try_sample_demos() -> None:
         thumbs = st.columns(4)
         for i, row in enumerate(SAMPLE_DEMOS):
             with thumbs[i]:
-                st.image(row["url"], use_container_width=True)
+                st.image(sample_image_for_display(row), use_container_width=True)
                 if st.button(
                     row["label"],
                     key=f"p2c_try_sample_{i}",
@@ -79,14 +79,14 @@ def _render_try_sample_demos() -> None:
                     type="secondary",
                 ):
                     try:
-                        raw = fetch_demo_bytes(row["url"])
+                        raw = load_demo_image_bytes(row)
                         st.session_state.setdefault("p2c_demo_staged", []).append((row["filename"], raw))
                         st.rerun()
                     except Exception as e:
                         st.error(f"Không tải được ảnh mẫu: {e}")
     st.markdown(
         '<p class="p2c-try-disclaimer">'
-        'Ảnh mẫu từ <a href="https://unsplash.com/license" target="_blank" rel="noopener noreferrer">Unsplash</a> (chỉ phục vụ demo). '
+        "Ảnh mẫu cấu hình trong <code>frontend/sample_images.py</code> (file trong repo hoặc URL). "
         "Khi tải ảnh của bạn lên, bạn chịu trách nhiệm về nội dung — bổ sung Điều khoản & Chính sách quyền riêng tư khi triển khai công khai.</p>",
         unsafe_allow_html=True,
     )
