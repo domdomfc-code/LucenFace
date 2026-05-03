@@ -13,12 +13,12 @@ from typing import Any, Dict, List, Tuple
 
 import streamlit as st
 from streamlit_image_coordinates import streamlit_image_coordinates
-from PIL import Image, ImageOps
+from PIL import Image, ImageDraw, ImageOps
 
 import frontend.bootstrap  # noqa: F401 — đưa thư mục gốc dự án vào sys.path
 from frontend import backend_lazy
 from frontend.backend_lazy import ensure_image_backend
-from frontend.config import APP_BUILD, APP_TITLE, BLUE
+from frontend.config import APP_BUILD, APP_TITLE, BG, BLUE
 from frontend.deploy_info import git_short_sha, is_streamlit_cloud
 from frontend.image_io import (
     decode_data_url_image,
@@ -73,15 +73,34 @@ def _pil_to_square_thumb(im: Image.Image, size: int) -> Image.Image:
     return im.resize((size, size), _resample)
 
 
+def _hex_rgb(hex_color: str) -> tuple[int, int, int]:
+    h = hex_color.strip().lstrip("#")
+    return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+
+
+def _pil_rounded_square_on_bg(im: Image.Image, *, radius: int | None = None) -> Image.Image:
+    """Bo góc trong pixel (iframe component thường không nhận CSS border-radius)."""
+    im = im.convert("RGB")
+    w, h = im.size
+    r = radius if radius is not None else max(10, min(w, h) // 6)
+    r = min(r, min(w, h) // 2)
+    mask = Image.new("L", (w, h), 0)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, w, h), radius=r, fill=255)
+    out = Image.new("RGB", (w, h), _hex_rgb(BG))
+    out.paste(im, (0, 0), mask=mask)
+    return out
+
+
 def _sample_src_for_click_widget(row: Any) -> Any:
-    """URL str hoặc PIL vuông _SAMPLE_THUMB_PX cho streamlit_image_coordinates."""
+    """URL str hoặc PIL vuông bo góc cho streamlit_image_coordinates."""
     src = sample_image_for_display(row)
     if isinstance(src, str) and (src.startswith("http://") or src.startswith("https://")):
         return src
     p = Path(src)
     if p.is_file():
         with Image.open(p) as im:
-            return _pil_to_square_thumb(im, _SAMPLE_THUMB_PX)
+            sq = _pil_to_square_thumb(im, _SAMPLE_THUMB_PX)
+            return _pil_rounded_square_on_bg(sq)
     return src
 
 
