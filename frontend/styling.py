@@ -336,36 +336,67 @@ def inject_app_css() -> None:
             display: block !important;
           }}
 
-          /* Chỉ mobile: chữ full-width + 4 ảnh một hàng căn giữa — PC giữ nguyên 1 hàng 5 cột */
+          /* Chỉ mobile: lưới 2 hàng (chữ full / 4 ảnh) + ảnh nhỏ hơn — PC không đụng */
           @media (max-width: 768px) {{
-            section.main div[data-testid="stHorizontalBlock"]:has(.p2c-try-light):has(.p2c-sample-thumb-marker) {{
-              flex-wrap: wrap !important;
-              justify-content: center !important;
-              align-content: center !important;
-              gap: 0.5rem !important;
+            /* Ảnh mẫu nhỏ hơn trên màn hẹp */
+            section.main [data-testid="column"]:has(.p2c-sample-thumb-marker) [data-testid="stIFrame"] {{
+              width: 60px !important;
+              max-width: 60px !important;
+              min-width: 60px !important;
+              height: 60px !important;
             }}
-            section.main div[data-testid="stHorizontalBlock"]:has(.p2c-try-light):has(.p2c-sample-thumb-marker) > div {{
-              flex-wrap: wrap !important;
-              justify-content: center !important;
-              align-content: center !important;
-              gap: 0.5rem !important;
+            section.main [data-testid="column"]:has(.p2c-sample-thumb-marker) iframe {{
+              max-width: 60px !important;
+              max-height: 60px !important;
             }}
-            section.main div[data-testid="stHorizontalBlock"]:has(.p2c-try-light):has(.p2c-sample-thumb-marker) [data-testid="column"]:has(.p2c-try-light) {{
-              flex: 1 1 100% !important;
+            /* Trường A: HorizontalBlock > Column (trực tiếp) */
+            section.main div[data-testid="stHorizontalBlock"]:has(.p2c-try-light):has(.p2c-sample-thumb-marker):has(> [data-testid="column"]) {{
+              display: grid !important;
+              grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
               width: 100% !important;
-              max-width: 100% !important;
+              max-width: min(calc(100vw - 1.25rem), 320px) !important;
+              margin-left: auto !important;
+              margin-right: auto !important;
+              gap: 0.35rem 0.2rem !important;
+              justify-items: center !important;
+            }}
+            section.main div[data-testid="stHorizontalBlock"]:has(.p2c-try-light):has(.p2c-sample-thumb-marker):has(> [data-testid="column"]) > [data-testid="column"]:has(.p2c-try-light) {{
+              grid-column: 1 / -1 !important;
+              justify-self: stretch !important;
+              width: 100% !important;
               min-width: 0 !important;
             }}
-            section.main div[data-testid="stHorizontalBlock"]:has(.p2c-try-light):has(.p2c-sample-thumb-marker) [data-testid="column"]:has(.p2c-sample-thumb-marker) {{
-              flex: 0 0 calc(23% - 0.2rem) !important;
-              width: auto !important;
-              max-width: 96px !important;
+            section.main div[data-testid="stHorizontalBlock"]:has(.p2c-try-light):has(.p2c-sample-thumb-marker):has(> [data-testid="column"]) > [data-testid="column"]:has(.p2c-sample-thumb-marker) {{
               min-width: 0 !important;
+              width: 100% !important;
+              max-width: 72px !important;
+            }}
+            /* Trường B: HorizontalBlock > div bọc > Column */
+            section.main div[data-testid="stHorizontalBlock"]:has(.p2c-try-light):has(.p2c-sample-thumb-marker) > div:has([data-testid="column"]) {{
+              display: grid !important;
+              grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+              width: 100% !important;
+              max-width: min(calc(100vw - 1.25rem), 320px) !important;
+              margin-left: auto !important;
+              margin-right: auto !important;
+              gap: 0.35rem 0.2rem !important;
+              justify-items: center !important;
+            }}
+            section.main div[data-testid="stHorizontalBlock"]:has(.p2c-try-light):has(.p2c-sample-thumb-marker) > div:has([data-testid="column"]) > [data-testid="column"]:has(.p2c-try-light) {{
+              grid-column: 1 / -1 !important;
+              justify-self: stretch !important;
+              width: 100% !important;
+              min-width: 0 !important;
+            }}
+            section.main div[data-testid="stHorizontalBlock"]:has(.p2c-try-light):has(.p2c-sample-thumb-marker) > div:has([data-testid="column"]) > [data-testid="column"]:has(.p2c-sample-thumb-marker) {{
+              min-width: 0 !important;
+              width: 100% !important;
+              max-width: 72px !important;
             }}
             section.main div[data-testid="stHorizontalBlock"]:has(.p2c-try-light):has(.p2c-sample-thumb-marker) .p2c-try-light {{
               align-items: center;
               text-align: center;
-              padding: 0.35rem 0.75rem 0.5rem;
+              padding: 0.35rem 0.5rem 0.45rem;
               min-height: auto;
               max-width: 100%;
               margin-left: auto;
@@ -373,6 +404,22 @@ def inject_app_css() -> None:
             }}
             section.main div[data-testid="stHorizontalBlock"]:has(.p2c-try-light):has(.p2c-sample-thumb-marker) .p2c-try-light-sub {{
               max-width: 100%;
+            }}
+          }}
+          @media (max-width: 400px) {{
+            section.main [data-testid="column"]:has(.p2c-sample-thumb-marker) [data-testid="stIFrame"] {{
+              width: 52px !important;
+              max-width: 52px !important;
+              min-width: 52px !important;
+              height: 52px !important;
+            }}
+            section.main [data-testid="column"]:has(.p2c-sample-thumb-marker) iframe {{
+              max-width: 52px !important;
+              max-height: 52px !important;
+            }}
+            section.main div[data-testid="stHorizontalBlock"]:has(.p2c-try-light):has(.p2c-sample-thumb-marker):has(> [data-testid="column"]),
+            section.main div[data-testid="stHorizontalBlock"]:has(.p2c-try-light):has(.p2c-sample-thumb-marker) > div:has([data-testid="column"]) {{
+              max-width: min(calc(100vw - 1rem), 280px) !important;
             }}
           }}
 
