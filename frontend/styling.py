@@ -309,16 +309,21 @@ def inject_app_css() -> None:
             margin: 0;
             line-height: 1.45;
           }}
+          /* Ảnh mẫu: bo góc rõ — overflow trên wrapper để iframe bị clip đúng hình */
           section.main [data-testid="column"]:has(.p2c-sample-thumb-marker) [data-testid="stIFrame"] {{
             width: 88px !important;
             max-width: 88px !important;
             min-width: 88px !important;
             margin-left: auto !important;
             margin-right: auto !important;
+            border-radius: 14px !important;
+            overflow: hidden !important;
+            box-shadow: 0 2px 10px rgba(15, 23, 42, 0.12),
+              0 0 0 1px rgba(15, 23, 42, 0.06) !important;
           }}
           section.main [data-testid="column"]:has(.p2c-sample-thumb-marker) iframe {{
-            border-radius: 10px !important;
-            box-shadow: 0 2px 8px rgba(15, 23, 42, 0.12);
+            border-radius: 14px !important;
+            display: block !important;
           }}
           .p2c-try-disclaimer {{
             font-size: 0.78rem;
