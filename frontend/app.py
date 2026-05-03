@@ -37,7 +37,7 @@ from frontend.streamlit_helpers import (
     render_checklist,
     result_to_checks_dict,
 )
-from frontend.styling import inject_app_css, inject_mobile_sample_thumbs_row_fix, render_sidebar_reopen_button
+from frontend.styling import inject_app_css, render_sidebar_reopen_button
 from frontend.thumbnails import render_image_thumbnails, thumbnail_checkbox_key
 from paste_image_component import paste_image_from_clipboard
 
@@ -58,7 +58,9 @@ def _pil_from_raw(raw: bytes) -> Image.Image | None:
         return None
 
 
-_SAMPLE_THUMB_PX = 88
+# Ảnh ghép mẫu (một widget) — tránh Streamlit xếp 4 cột dọc trên mobile
+_STRIP_CELL_PX = 64
+_STRIP_GAP_PX = 8
 
 
 def _pil_to_square_thumb(im: Image.Image, size: int) -> Image.Image:
@@ -86,70 +88,126 @@ def _pil_rounded_square_on_bg(im: Image.Image, *, radius: int | None = None) -> 
     return out
 
 
-def _sample_src_for_click_widget(row: Any) -> Any:
-    """URL str hoặc PIL vuông bo góc cho streamlit_image_coordinates."""
-    src = sample_image_for_display(row)
-    if isinstance(src, str) and (src.startswith("http://") or src.startswith("https://")):
-        return src
-    p = Path(src)
-    if p.is_file():
-        with Image.open(p) as im:
-            sq = _pil_to_square_thumb(im, _SAMPLE_THUMB_PX)
-            return _pil_rounded_square_on_bg(sq)
-    return src
+def _pil_demo_cell_for_strip(row: Any, cell: int) -> Image.Image | None:
+    """Ô vuông bo góc cho một dòng trong ảnh ghép (file hoặc URL)."""
+    try:
+        src = sample_image_for_display(row)
+        if isinstance(src, str) and (src.startswith("http://") or src.startswith("https://")):
+            raw = load_demo_image_bytes(row)
+            im = Image.open(io.BytesIO(raw))
+        else:
+            p = Path(src)
+            if not p.is_file():
+                return None
+            im = Image.open(p)
+        sq = _pil_to_square_thumb(im, cell)
+        return _pil_rounded_square_on_bg(sq)
+    except Exception:
+        return None
+
+
+def _build_sample_demo_strip(*, cell: int, gap: int) -> tuple[Image.Image, int] | None:
+    """Một ảnh ngang: n ô mẫu + khe; trả về (PIL, n)."""
+    n = len(SAMPLE_DEMOS)
+    if n == 0:
+        return None
+    w = n * cell + (n - 1) * gap
+    strip = Image.new("RGB", (w, cell), (255, 255, 255))
+    x = 0
+    for row in SAMPLE_DEMOS:
+        cell_pil = _pil_demo_cell_for_strip(row, cell)
+        if cell_pil is None:
+            cell_pil = Image.new("RGB", (cell, cell), (232, 232, 232))
+        strip.paste(cell_pil, (x, 0))
+        x += cell + gap
+    return strip, n
+
+
+def _strip_demo_index_from_x(x: float, *, cell: int, gap: int, n: int) -> int | None:
+    """Map tọa độ x (pixel ảnh ghép) → chỉ số mẫu 0..n-1."""
+    if n <= 0 or x < 0:
+        return None
+    step = cell + gap
+    i = int(x // step)
+    rem = x - i * step
+    if i >= n:
+        return n - 1
+    if rem >= cell:
+        return min(i + 1, n - 1)
+    return i
+
+
+def _xy_from_image_click(click: Any) -> tuple[float, float] | None:
+    if not click or not isinstance(click, dict):
+        return None
+    x = click.get("x")
+    y = click.get("y")
+    if x is None or y is None:
+        return None
+    try:
+        return float(x), float(y)
+    except (TypeError, ValueError):
+        return None
 
 
 def _render_try_sample_demos() -> None:
-    """PC: chữ trái + 4 ảnh trong cột phải. Mobile: 2 hàng (chữ rồi 4 ảnh một hàng) — tránh 1 st.columns(5) bị xếp dọc."""
+    """Một ảnh ghép + streamlit_image_coordinates — luôn hàng ngang, không phụ thuộc cột Streamlit trên mobile."""
+    built = _build_sample_demo_strip(cell=_STRIP_CELL_PX, gap=_STRIP_GAP_PX)
     c_left, c_right = st.columns([1.08, 2.92], gap="medium")
     with c_left:
         st.markdown(
             """
 <div class="p2c-try-light" data-p2c-sample-branch="left">
   <p class="p2c-try-light-title">Chưa có ảnh?</p>
-  <p class="p2c-try-light-sub">Thử một trong các ảnh sau — <strong>bấm trực tiếp vào ảnh</strong> để thêm vào danh sách.</p>
+  <p class="p2c-try-light-sub">Thử một trong các ảnh sau — <strong>bấm vào một ảnh</strong> trên dải bên phải để thêm vào danh sách.</p>
 </div>
 """,
             unsafe_allow_html=True,
         )
     with c_right:
         st.markdown(
-            '<div data-p2c-sample-branch="right" class="p2c-sample-thumb-cluster-anchor" aria-hidden="true"></div>',
+            '<div class="p2c-sample-strip-marker" aria-hidden="true"></div>',
             unsafe_allow_html=True,
         )
-        thumbs = st.columns(len(SAMPLE_DEMOS), gap="small")
-        for i, row in enumerate(SAMPLE_DEMOS):
-            with thumbs[i]:
-                st.markdown(
-                    '<div class="p2c-sample-thumb-marker" aria-hidden="true"></div>',
-                    unsafe_allow_html=True,
+        if built is None:
+            st.caption("Chưa cấu hình ảnh mẫu.")
+        else:
+            strip_pil, n_strip = built
+            strip_w = strip_pil.size[0]
+            _prev_key = "p2c_sample_strip_click_prev"
+            _coord_key = "p2c_sample_strip_coord"
+            try:
+                _click = streamlit_image_coordinates(
+                    strip_pil,
+                    key=_coord_key,
+                    width=strip_w,
+                    use_column_width="never",
+                    cursor="pointer",
                 )
-                _prev_key = f"p2c_sample_click_prev_{i}"
-                _coord_key = f"p2c_sample_coord_{i}"
-                try:
-                    _click = streamlit_image_coordinates(
-                        _sample_src_for_click_widget(row),
-                        key=_coord_key,
-                        width=_SAMPLE_THUMB_PX,
-                        use_column_width="never",
-                        cursor="pointer",
-                    )
-                except Exception as e:
-                    st.caption("Không hiển thị ảnh tương tác")
-                    st.code(str(e))
-                    continue
+            except Exception as e:
+                st.caption("Không hiển thị ảnh tương tác")
+                st.code(str(e))
+            else:
                 if _click:
                     _sig = json.dumps(_click, sort_keys=True, default=str)
                     if _sig != st.session_state.get(_prev_key):
                         st.session_state[_prev_key] = _sig
-                        try:
-                            raw = load_demo_image_bytes(row)
-                            st.session_state.setdefault("p2c_demo_staged", []).append(
-                                (row["filename"], raw)
+                        xy = _xy_from_image_click(_click)
+                        if xy is not None:
+                            _x, _y = xy
+                            idx = _strip_demo_index_from_x(
+                                _x, cell=_STRIP_CELL_PX, gap=_STRIP_GAP_PX, n=n_strip
                             )
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Không tải được ảnh mẫu: {e}")
+                            if idx is not None and 0 <= idx < len(SAMPLE_DEMOS):
+                                row = SAMPLE_DEMOS[idx]
+                                try:
+                                    raw = load_demo_image_bytes(row)
+                                    st.session_state.setdefault("p2c_demo_staged", []).append(
+                                        (row["filename"], raw)
+                                    )
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Không tải được ảnh mẫu: {e}")
     st.markdown(
         '<p class="p2c-try-disclaimer">'
         "Ảnh mẫu cấu hình trong <code>frontend/sample_images.py</code> (file trong repo hoặc URL). "
@@ -172,7 +230,6 @@ def main() -> None:
     if "p2c_last_paste_fingerprint" not in st.session_state:
         st.session_state["p2c_last_paste_fingerprint"] = None
     inject_app_css()
-    inject_mobile_sample_thumbs_row_fix()
     render_sidebar_reopen_button()
 
     _git = git_short_sha()

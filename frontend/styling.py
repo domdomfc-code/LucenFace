@@ -292,20 +292,28 @@ def inject_app_css() -> None:
             border: 1px solid rgba(0, 91, 196, 0.2);
           }}
 
-          /* Ảnh mẫu: 2 cột ngoài (chữ | 4 ảnh lồng) — căn dọc hàng ngoài */
+          /* Ảnh mẫu: chữ | một dải (một iframe) — căn dọc hàng ngoài */
           div[data-testid="stHorizontalBlock"]:has([data-p2c-sample-branch="left"]) {{
             align-items: center !important;
           }}
-          /* Hàng 4 ảnh bên trong cột phải: căn giữa */
-          section.main [data-testid="column"]:has(.p2c-sample-thumb-cluster-anchor) [data-testid="stHorizontalBlock"] {{
-            justify-content: center !important;
-            width: 100% !important;
-            max-width: min(100%, 380px);
+          section.main [data-testid="column"]:has(.p2c-sample-strip-marker) {{
+            min-width: 0 !important;
+          }}
+          section.main [data-testid="column"]:has(.p2c-sample-strip-marker) [data-testid="stIFrame"] {{
+            width: auto !important;
+            max-width: min(100%, calc(100vw - 2rem)) !important;
             margin-left: auto !important;
             margin-right: auto !important;
+            border-radius: 14px !important;
+            overflow: hidden !important;
+            box-shadow: 0 2px 10px rgba(15, 23, 42, 0.12),
+              0 0 0 1px rgba(15, 23, 42, 0.06) !important;
           }}
-          section.main [data-testid="column"]:has(.p2c-sample-thumb-cluster-anchor) [data-testid="column"]:has(.p2c-sample-thumb-marker) {{
-            min-width: 0 !important;
+          section.main [data-testid="column"]:has(.p2c-sample-strip-marker) iframe {{
+            border-radius: 14px !important;
+            display: block !important;
+            max-width: 100% !important;
+            height: auto !important;
           }}
           .p2c-try-light {{
             display: flex;
@@ -330,24 +338,6 @@ def inject_app_css() -> None:
             line-height: 1.4;
             max-width: 22rem;
           }}
-          /* Ảnh mẫu: bo góc rõ — overflow trên wrapper để iframe bị clip đúng hình */
-          section.main [data-testid="column"]:has(.p2c-sample-thumb-marker) [data-testid="stIFrame"] {{
-            width: 88px !important;
-            max-width: 88px !important;
-            min-width: 88px !important;
-            margin-left: auto !important;
-            margin-right: auto !important;
-            border-radius: 14px !important;
-            overflow: hidden !important;
-            box-shadow: 0 2px 10px rgba(15, 23, 42, 0.12),
-              0 0 0 1px rgba(15, 23, 42, 0.06) !important;
-          }}
-          section.main [data-testid="column"]:has(.p2c-sample-thumb-marker) iframe {{
-            border-radius: 14px !important;
-            display: block !important;
-          }}
-
-          /* Mobile: chữ căn giữa + ảnh mẫu nhỏ hơn (layout dựa vào cột lồng, không ép grid 5 cột) */
           @media (max-width: 768px) {{
             .p2c-try-light[data-p2c-sample-branch="left"] {{
               text-align: center;
@@ -361,48 +351,9 @@ def inject_app_css() -> None:
             .p2c-try-light[data-p2c-sample-branch="left"] .p2c-try-light-sub {{
               max-width: 100%;
             }}
-            section.main [data-testid="column"]:has(.p2c-sample-thumb-marker) [data-testid="stIFrame"] {{
-              width: 64px !important;
-              max-width: 64px !important;
-              min-width: 64px !important;
-              height: 64px !important;
-            }}
-            section.main [data-testid="column"]:has(.p2c-sample-thumb-marker) iframe {{
-              max-width: 64px !important;
-              max-height: 64px !important;
-            }}
-            section.main [data-testid="column"]:has(.p2c-sample-thumb-cluster-anchor) [data-testid="stHorizontalBlock"] {{
-              max-width: min(calc(100vw - 1.5rem), 340px) !important;
-              display: flex !important;
-              flex-direction: row !important;
-              flex-wrap: nowrap !important;
-              justify-content: center !important;
-              align-items: flex-start !important;
-            }}
-            section.main [data-testid="column"]:has(.p2c-sample-thumb-cluster-anchor) [data-testid="stHorizontalBlock"] > div {{
-              display: flex !important;
-              flex-direction: row !important;
-              flex-wrap: nowrap !important;
-              justify-content: center !important;
-              width: 100% !important;
-            }}
-            section.main [data-testid="column"]:has(.p2c-sample-thumb-cluster-anchor) [data-testid="stHorizontalBlock"] [data-testid="column"]:has(.p2c-sample-thumb-marker) {{
-              flex: 0 0 auto !important;
-              width: auto !important;
-              max-width: 26% !important;
-              min-width: 0 !important;
-            }}
-          }}
-          @media (max-width: 400px) {{
-            section.main [data-testid="column"]:has(.p2c-sample-thumb-marker) [data-testid="stIFrame"] {{
-              width: 56px !important;
-              max-width: 56px !important;
-              min-width: 56px !important;
-              height: 56px !important;
-            }}
-            section.main [data-testid="column"]:has(.p2c-sample-thumb-marker) iframe {{
-              max-width: 56px !important;
-              max-height: 56px !important;
+            section.main [data-testid="column"]:has(.p2c-sample-strip-marker) {{
+              overflow-x: auto;
+              -webkit-overflow-scrolling: touch;
             }}
           }}
 
@@ -433,77 +384,6 @@ def inject_app_css() -> None:
     )
 
 
-def inject_mobile_sample_thumbs_row_fix() -> None:
-    """Streamlit có thể xếp cột con dọc trên mobile — ép flex row chỉ khi ≤768px (không đụng PC)."""
-    try:
-        import streamlit.components.v1 as components
-    except ImportError:
-        return
-    components.html(
-        """
-<div style="height:1px;width:1px;overflow:hidden;" aria-hidden="true"></div>
-<script>
-(function () {
-  var root = (window.parent && window.parent !== window) ? window.parent : window;
-  function fix() {
-    try {
-      if (!root.matchMedia || !root.matchMedia("(max-width: 768px)").matches) return;
-      var d = root.document;
-      var main = d.querySelector("section.main") || d.body;
-      var anchor = main.querySelector(".p2c-sample-thumb-cluster-anchor");
-      if (!anchor) return;
-      var col = anchor.closest("[data-testid=\\"column\\"]");
-      if (!col) return;
-      var hbs = col.querySelectorAll("[data-testid=\\"stHorizontalBlock\\"]");
-      hbs.forEach(function (hb) {
-        if (!hb.querySelector(".p2c-sample-thumb-marker")) return;
-        hb.style.setProperty("display", "flex", "important");
-        hb.style.setProperty("flex-direction", "row", "important");
-        hb.style.setProperty("flex-wrap", "nowrap", "important");
-        hb.style.setProperty("justify-content", "center", "important");
-        hb.style.setProperty("align-items", "flex-start", "important");
-        hb.style.setProperty("width", "100%", "important");
-        hb.style.setProperty("gap", "0.25rem", "important");
-        var inner = hb.firstElementChild;
-        if (inner) {
-          inner.style.setProperty("display", "flex", "important");
-          inner.style.setProperty("flex-direction", "row", "important");
-          inner.style.setProperty("flex-wrap", "nowrap", "important");
-          inner.style.setProperty("justify-content", "center", "important");
-          inner.style.setProperty("width", "100%", "important");
-          inner.style.setProperty("gap", "0.25rem", "important");
-        }
-        hb.querySelectorAll("[data-testid=\\"column\\"]").forEach(function (c) {
-          if (!c.querySelector(".p2c-sample-thumb-marker")) return;
-          c.style.setProperty("flex", "0 0 auto", "important");
-          c.style.setProperty("width", "auto", "important");
-          c.style.setProperty("max-width", "25%", "important");
-          c.style.setProperty("min-width", "0", "important");
-        });
-      });
-    } catch (e) {}
-  }
-  fix();
-  [80, 250, 700, 1600].forEach(function (t) { setTimeout(fix, t); });
-  try {
-    var mq = root.matchMedia("(max-width: 768px)");
-    mq.addEventListener("change", fix);
-  } catch (e1) {
-    try { root.matchMedia("(max-width: 768px)").addListener(fix); } catch (e2) {}
-  }
-  try {
-    var Mo = root.MutationObserver || MutationObserver;
-    var mo = new Mo(function () { fix(); });
-    mo.observe(root.document.body, { childList: true, subtree: true });
-    setTimeout(function () { try { mo.disconnect(); } catch (e) {} }, 10000);
-  } catch (e3) {}
-})();
-</script>
-""",
-        height=1,
-    )
-
-
 def render_sidebar_reopen_button() -> None:
     """Mở sidebar khi vừa tải (Streamlit có thể nhớ trạng thái thu gọn trong localStorage)."""
     html = """
@@ -530,8 +410,15 @@ def render_sidebar_reopen_button() -> None:
   const w = window.parent;
   if (w.__p2cSidebarExpandOnLoadScheduled) return;
   w.__p2cSidebarExpandOnLoadScheduled = true;
+  const isMobileViewport = () => {
+    try {
+      if (w.matchMedia && w.matchMedia("(max-width: 768px)").matches) return true;
+    } catch (e) {}
+    return typeof w.innerWidth === "number" && w.innerWidth < 768;
+  };
   const expandIfCollapsed = () => {
     try {
+      if (isMobileViewport()) return;
       const d = w.document;
       const side = d.querySelector('section[data-testid="stSidebar"]');
       if (!side) return;
