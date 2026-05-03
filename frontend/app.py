@@ -4,6 +4,7 @@ Chạy từ gốc dự án: `streamlit run app.py` (khuyến nghị) hoặc `str
 """
 from __future__ import annotations
 
+import hashlib
 import io
 import platform
 from typing import Any, Dict, List, Tuple
@@ -101,6 +102,10 @@ def main() -> None:
     )
     if "p2c_demo_staged" not in st.session_state:
         st.session_state["p2c_demo_staged"] = []
+    if "p2c_clipboard_queue" not in st.session_state:
+        st.session_state["p2c_clipboard_queue"] = []
+    if "p2c_last_paste_fingerprint" not in st.session_state:
+        st.session_state["p2c_last_paste_fingerprint"] = None
     inject_app_css()
     render_sidebar_reopen_button()
 
@@ -234,7 +239,10 @@ def main() -> None:
         enable_global_paste = st.toggle(
             "Bắt Ctrl+V toàn trang",
             value=True,
-            help="Bật: Ctrl+V/⌘+V ở bất kỳ đâu sẽ dán ảnh (trừ khi đang gõ trong ô chữ). Tắt nếu bạn không muốn hotkey global.",
+            help=(
+                "Bật: Ctrl+V/⌘+V ở bất kỳ đâu sẽ dán ảnh (trừ khi đang gõ trong ô chữ). "
+                "Mỗi lần dán **ảnh mới** được **thêm** vào danh sách, không thay thế ảnh đã dán trước."
+            ),
         )
         lazy_init = st.toggle(
             "Khởi tạo engine khi bấm xử lý",
@@ -307,7 +315,7 @@ def main() -> None:
       <circle cx="40" cy="18" r="5" fill="#d1d5db"/>
     </svg>
   </div>
-  <div class="p2c-upload-tagline-scroll"><p class="p2c-upload-tagline">Kéo hình ảnh của bạn bất cứ nơi nào trên trang này hoặc nhấn <strong style="color:rgba(255,255,255,0.95)">Ctrl</strong> / <strong style="color:rgba(255,255,255,0.95)">⌘</strong> + <strong style="color:rgba(255,255,255,0.95)">V</strong> để dán hình ảnh.</p></div>
+  <div class="p2c-upload-tagline-scroll"><p class="p2c-upload-tagline">Kéo hình ảnh của bạn bất cứ nơi nào trên trang này hoặc nhấn <strong style="color:rgba(255,255,255,0.95)">Ctrl</strong> / <strong style="color:rgba(255,255,255,0.95)">⌘</strong> + <strong style="color:rgba(255,255,255,0.95)">V</strong> để dán — <strong style="color:rgba(255,255,255,0.95)">dán nhiều lần</strong> để thêm từng ảnh vào danh sách (không ghi đè ảnh trước).</p></div>
 </div>
 """,
             unsafe_allow_html=True,
@@ -325,23 +333,39 @@ def main() -> None:
             key=f"p2c_clipboard_paste_{nonce}",
         )
 
+        if pasted_data_url:
+            _fp = hashlib.sha256(
+                str(pasted_data_url).encode("utf-8", errors="ignore")
+            ).hexdigest()
+            if _fp != st.session_state.get("p2c_last_paste_fingerprint"):
+                _dec_p, _reason_p = decode_data_url_image_verbose(pasted_data_url)
+                if _dec_p:
+                    _blob, _ = _dec_p
+                    _kind = sniff_image_kind(_blob)
+                    _ext = "jpg" if _kind == "jpeg" else "png" if _kind == "png" else "png"
+                    _n = len(st.session_state["p2c_clipboard_queue"]) + 1
+                    st.session_state["p2c_clipboard_queue"].append(
+                        (f"clipboard_{_n:03d}.{_ext}", _blob)
+                    )
+                    st.session_state["p2c_last_paste_fingerprint"] = _fp
+                elif _reason_p:
+                    st.warning(f"Lần dán không hợp lệ: **{_reason_p}**")
+
+        _clip_staged: List[Tuple[str, bytes]] = list(st.session_state["p2c_clipboard_queue"])
         upload_list = list(uploads) if uploads else []
         _demo_staged_check: List[Tuple[str, bytes]] = list(st.session_state.get("p2c_demo_staged") or [])
-        if not upload_list and not pasted_data_url and not _demo_staged_check:
+        if not upload_list and not _demo_staged_check and not _clip_staged:
             st.markdown(
-                '<div class="p2c-upload-empty">Chưa có ảnh — hãy <strong>chọn tệp</strong>, <strong>dán</strong> từ clipboard hoặc <strong>thử ảnh mẫu</strong> bên dưới.</div>',
+                '<div class="p2c-upload-empty">Chưa có ảnh — hãy <strong>chọn tệp</strong>, <strong>dán</strong> (nhiều lần) từ clipboard hoặc <strong>thử ảnh mẫu</strong> bên dưới.</div>',
                 unsafe_allow_html=True,
             )
             _render_try_sample_demos()
             return
 
     demo_staged: List[Tuple[str, bytes]] = list(st.session_state.get("p2c_demo_staged") or [])
-    staged = demo_staged + gather_staged_images(upload_list, pasted_data_url)
+    _clip_staged = list(st.session_state.get("p2c_clipboard_queue") or [])
+    staged = demo_staged + _clip_staged + gather_staged_images(upload_list)
     if not staged:
-        if pasted_data_url and not upload_list:
-            _dec, reason = decode_data_url_image_verbose(pasted_data_url)
-            if reason:
-                st.warning(f"Không nhận được ảnh từ clipboard. Lý do: **{reason}**")
         st.warning("Không đọc được ảnh hợp lệ — chỉ hỗ trợ **JPG/PNG** (HEIC/HEIF cần export sang JPG).")
         return
 
@@ -353,15 +377,15 @@ def main() -> None:
 
     c1, c2, c3 = st.columns([1, 2, 1], gap="small")
     with c1:
-        if st.button("Xóa ảnh clipboard", width="content"):
+        if st.button("Xóa ảnh đã dán", width="content", help="Gỡ toàn bộ ảnh từ clipboard khỏi danh sách."):
+            st.session_state["p2c_clipboard_queue"] = []
+            st.session_state["p2c_last_paste_fingerprint"] = None
             st.session_state["p2c_clipboard_paste_nonce"] = int(st.session_state.get("p2c_clipboard_paste_nonce", 0)) + 1
             st.rerun()
     with c2:
-        if pasted_data_url:
-            dec = decode_data_url_image(str(pasted_data_url))
-            if dec:
-                blob, fn = dec
-                st.success(f"Đã nhận ảnh từ clipboard: `{fn}` ({len(blob)/1024:.0f} KB).")
+        _nq = len(st.session_state.get("p2c_clipboard_queue") or [])
+        if _nq:
+            st.success(f"Đã có **{_nq}** ảnh từ clipboard trong danh sách — có thể **dán thêm** (Ctrl+V) để cộng dồn.")
     with c3:
         if st.session_state.get("p2c_demo_staged"):
             if st.button(

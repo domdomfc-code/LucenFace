@@ -2,6 +2,6 @@
 
 APP_TITLE = "Chuẩn hóa ảnh chân dung học sinh"
 # Tăng / đổi chuỗi này khi deploy để dễ thấy trên Cloud (topbar + sidebar).
-APP_BUILD = "3.16.0-deploy-marker"
+APP_BUILD = "3.17.0-clipboard-multi-paste"
 BLUE = "#005BC4"
 BG = "#F6F9FF"

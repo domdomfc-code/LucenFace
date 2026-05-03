@@ -84,8 +84,8 @@ def looks_like_heic(name: str, raw: bytes) -> bool:
     return False
 
 
-def gather_staged_images(upload_list: List[Any], pasted_data_url: Any) -> List[Tuple[str, bytes]]:
-    """Đọc bytes từ upload + clipboard (một lần) để xem trước và xử lý."""
+def gather_staged_images(upload_list: List[Any]) -> List[Tuple[str, bytes]]:
+    """Đọc bytes từ file upload (clipboard nhiều ảnh xử lý trong app.py qua session_state)."""
     out: List[Tuple[str, bytes]] = []
     for up in upload_list:
         try:
@@ -93,9 +93,4 @@ def gather_staged_images(upload_list: List[Any], pasted_data_url: Any) -> List[T
         except Exception:
             pass
         out.append((up.name, up.read()))
-    if pasted_data_url:
-        dec, _reason = decode_data_url_image_verbose(pasted_data_url)
-        if dec:
-            blob, fn = dec
-            out.append((fn, blob))
     return out
