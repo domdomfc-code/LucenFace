@@ -292,9 +292,20 @@ def inject_app_css() -> None:
             border: 1px solid rgba(0, 91, 196, 0.2);
           }}
 
-          /* Hàng ảnh mẫu kiểu remove.bg: chữ phẳng + thumbnail */
-          div[data-testid="stHorizontalBlock"]:has(.p2c-try-light):has(.p2c-sample-thumb-marker) {{
+          /* Ảnh mẫu: 2 cột ngoài (chữ | 4 ảnh lồng) — căn dọc hàng ngoài */
+          div[data-testid="stHorizontalBlock"]:has([data-p2c-sample-branch="left"]) {{
             align-items: center !important;
+          }}
+          /* Hàng 4 ảnh bên trong cột phải: căn giữa */
+          section.main [data-testid="column"]:has(.p2c-sample-thumb-cluster-anchor) [data-testid="stHorizontalBlock"] {{
+            justify-content: center !important;
+            width: 100% !important;
+            max-width: min(100%, 380px);
+            margin-left: auto !important;
+            margin-right: auto !important;
+          }}
+          section.main [data-testid="column"]:has(.p2c-sample-thumb-cluster-anchor) [data-testid="column"]:has(.p2c-sample-thumb-marker) {{
+            min-width: 0 !important;
           }}
           .p2c-try-light {{
             display: flex;
@@ -336,90 +347,44 @@ def inject_app_css() -> None:
             display: block !important;
           }}
 
-          /* Chỉ mobile: lưới 2 hàng (chữ full / 4 ảnh) + ảnh nhỏ hơn — PC không đụng */
+          /* Mobile: chữ căn giữa + ảnh mẫu nhỏ hơn (layout dựa vào cột lồng, không ép grid 5 cột) */
           @media (max-width: 768px) {{
-            /* Ảnh mẫu nhỏ hơn trên màn hẹp */
-            section.main [data-testid="column"]:has(.p2c-sample-thumb-marker) [data-testid="stIFrame"] {{
-              width: 60px !important;
-              max-width: 60px !important;
-              min-width: 60px !important;
-              height: 60px !important;
-            }}
-            section.main [data-testid="column"]:has(.p2c-sample-thumb-marker) iframe {{
-              max-width: 60px !important;
-              max-height: 60px !important;
-            }}
-            /* Trường A: HorizontalBlock > Column (trực tiếp) */
-            section.main div[data-testid="stHorizontalBlock"]:has(.p2c-try-light):has(.p2c-sample-thumb-marker):has(> [data-testid="column"]) {{
-              display: grid !important;
-              grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
-              width: 100% !important;
-              max-width: min(calc(100vw - 1.25rem), 320px) !important;
-              margin-left: auto !important;
-              margin-right: auto !important;
-              gap: 0.35rem 0.2rem !important;
-              justify-items: center !important;
-            }}
-            section.main div[data-testid="stHorizontalBlock"]:has(.p2c-try-light):has(.p2c-sample-thumb-marker):has(> [data-testid="column"]) > [data-testid="column"]:has(.p2c-try-light) {{
-              grid-column: 1 / -1 !important;
-              justify-self: stretch !important;
-              width: 100% !important;
-              min-width: 0 !important;
-            }}
-            section.main div[data-testid="stHorizontalBlock"]:has(.p2c-try-light):has(.p2c-sample-thumb-marker):has(> [data-testid="column"]) > [data-testid="column"]:has(.p2c-sample-thumb-marker) {{
-              min-width: 0 !important;
-              width: 100% !important;
-              max-width: 72px !important;
-            }}
-            /* Trường B: HorizontalBlock > div bọc > Column */
-            section.main div[data-testid="stHorizontalBlock"]:has(.p2c-try-light):has(.p2c-sample-thumb-marker) > div:has([data-testid="column"]) {{
-              display: grid !important;
-              grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
-              width: 100% !important;
-              max-width: min(calc(100vw - 1.25rem), 320px) !important;
-              margin-left: auto !important;
-              margin-right: auto !important;
-              gap: 0.35rem 0.2rem !important;
-              justify-items: center !important;
-            }}
-            section.main div[data-testid="stHorizontalBlock"]:has(.p2c-try-light):has(.p2c-sample-thumb-marker) > div:has([data-testid="column"]) > [data-testid="column"]:has(.p2c-try-light) {{
-              grid-column: 1 / -1 !important;
-              justify-self: stretch !important;
-              width: 100% !important;
-              min-width: 0 !important;
-            }}
-            section.main div[data-testid="stHorizontalBlock"]:has(.p2c-try-light):has(.p2c-sample-thumb-marker) > div:has([data-testid="column"]) > [data-testid="column"]:has(.p2c-sample-thumb-marker) {{
-              min-width: 0 !important;
-              width: 100% !important;
-              max-width: 72px !important;
-            }}
-            section.main div[data-testid="stHorizontalBlock"]:has(.p2c-try-light):has(.p2c-sample-thumb-marker) .p2c-try-light {{
-              align-items: center;
+            .p2c-try-light[data-p2c-sample-branch="left"] {{
               text-align: center;
-              padding: 0.35rem 0.5rem 0.45rem;
+              align-items: center;
+              padding: 0.35rem 0.75rem 0.65rem;
               min-height: auto;
               max-width: 100%;
               margin-left: auto;
               margin-right: auto;
             }}
-            section.main div[data-testid="stHorizontalBlock"]:has(.p2c-try-light):has(.p2c-sample-thumb-marker) .p2c-try-light-sub {{
+            .p2c-try-light[data-p2c-sample-branch="left"] .p2c-try-light-sub {{
               max-width: 100%;
+            }}
+            section.main [data-testid="column"]:has(.p2c-sample-thumb-marker) [data-testid="stIFrame"] {{
+              width: 64px !important;
+              max-width: 64px !important;
+              min-width: 64px !important;
+              height: 64px !important;
+            }}
+            section.main [data-testid="column"]:has(.p2c-sample-thumb-marker) iframe {{
+              max-width: 64px !important;
+              max-height: 64px !important;
+            }}
+            section.main [data-testid="column"]:has(.p2c-sample-thumb-cluster-anchor) [data-testid="stHorizontalBlock"] {{
+              max-width: min(calc(100vw - 1.5rem), 340px) !important;
             }}
           }}
           @media (max-width: 400px) {{
             section.main [data-testid="column"]:has(.p2c-sample-thumb-marker) [data-testid="stIFrame"] {{
-              width: 52px !important;
-              max-width: 52px !important;
-              min-width: 52px !important;
-              height: 52px !important;
+              width: 56px !important;
+              max-width: 56px !important;
+              min-width: 56px !important;
+              height: 56px !important;
             }}
             section.main [data-testid="column"]:has(.p2c-sample-thumb-marker) iframe {{
-              max-width: 52px !important;
-              max-height: 52px !important;
-            }}
-            section.main div[data-testid="stHorizontalBlock"]:has(.p2c-try-light):has(.p2c-sample-thumb-marker):has(> [data-testid="column"]),
-            section.main div[data-testid="stHorizontalBlock"]:has(.p2c-try-light):has(.p2c-sample-thumb-marker) > div:has([data-testid="column"]) {{
-              max-width: min(calc(100vw - 1rem), 280px) !important;
+              max-width: 56px !important;
+              max-height: 56px !important;
             }}
           }}
 

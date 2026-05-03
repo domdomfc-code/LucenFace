@@ -100,51 +100,56 @@ def _sample_src_for_click_widget(row: Any) -> Any:
 
 
 def _render_try_sample_demos() -> None:
-    """Kiểu remove.bg: chữ phẳng bên trái + hàng ảnh mẫu (không ô nền tối)."""
-    n = len(SAMPLE_DEMOS)
-    cols = st.columns([2.15] + [1.0] * n, gap="large")
-    with cols[0]:
+    """PC: chữ trái + 4 ảnh trong cột phải. Mobile: 2 hàng (chữ rồi 4 ảnh một hàng) — tránh 1 st.columns(5) bị xếp dọc."""
+    c_left, c_right = st.columns([1.08, 2.92], gap="medium")
+    with c_left:
         st.markdown(
             """
-<div class="p2c-try-light">
+<div class="p2c-try-light" data-p2c-sample-branch="left">
   <p class="p2c-try-light-title">Chưa có ảnh?</p>
   <p class="p2c-try-light-sub">Thử một trong các ảnh sau — <strong>bấm trực tiếp vào ảnh</strong> để thêm vào danh sách.</p>
 </div>
 """,
             unsafe_allow_html=True,
         )
-    for i, row in enumerate(SAMPLE_DEMOS):
-        with cols[i + 1]:
-            st.markdown(
-                '<div class="p2c-sample-thumb-marker" aria-hidden="true"></div>',
-                unsafe_allow_html=True,
-            )
-            _prev_key = f"p2c_sample_click_prev_{i}"
-            _coord_key = f"p2c_sample_coord_{i}"
-            try:
-                _click = streamlit_image_coordinates(
-                    _sample_src_for_click_widget(row),
-                    key=_coord_key,
-                    width=_SAMPLE_THUMB_PX,
-                    use_column_width="never",
-                    cursor="pointer",
+    with c_right:
+        st.markdown(
+            '<div data-p2c-sample-branch="right" class="p2c-sample-thumb-cluster-anchor" aria-hidden="true"></div>',
+            unsafe_allow_html=True,
+        )
+        thumbs = st.columns(len(SAMPLE_DEMOS), gap="small")
+        for i, row in enumerate(SAMPLE_DEMOS):
+            with thumbs[i]:
+                st.markdown(
+                    '<div class="p2c-sample-thumb-marker" aria-hidden="true"></div>',
+                    unsafe_allow_html=True,
                 )
-            except Exception as e:
-                st.caption("Không hiển thị ảnh tương tác")
-                st.code(str(e))
-                continue
-            if _click:
-                _sig = json.dumps(_click, sort_keys=True, default=str)
-                if _sig != st.session_state.get(_prev_key):
-                    st.session_state[_prev_key] = _sig
-                    try:
-                        raw = load_demo_image_bytes(row)
-                        st.session_state.setdefault("p2c_demo_staged", []).append(
-                            (row["filename"], raw)
-                        )
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Không tải được ảnh mẫu: {e}")
+                _prev_key = f"p2c_sample_click_prev_{i}"
+                _coord_key = f"p2c_sample_coord_{i}"
+                try:
+                    _click = streamlit_image_coordinates(
+                        _sample_src_for_click_widget(row),
+                        key=_coord_key,
+                        width=_SAMPLE_THUMB_PX,
+                        use_column_width="never",
+                        cursor="pointer",
+                    )
+                except Exception as e:
+                    st.caption("Không hiển thị ảnh tương tác")
+                    st.code(str(e))
+                    continue
+                if _click:
+                    _sig = json.dumps(_click, sort_keys=True, default=str)
+                    if _sig != st.session_state.get(_prev_key):
+                        st.session_state[_prev_key] = _sig
+                        try:
+                            raw = load_demo_image_bytes(row)
+                            st.session_state.setdefault("p2c_demo_staged", []).append(
+                                (row["filename"], raw)
+                            )
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Không tải được ảnh mẫu: {e}")
     st.markdown(
         '<p class="p2c-try-disclaimer">'
         "Ảnh mẫu cấu hình trong <code>frontend/sample_images.py</code> (file trong repo hoặc URL). "
