@@ -44,6 +44,11 @@ SAMPLE_DEMOS: List[SampleDemo] = [
         "filename": "mau_04.png",
         "path": "assets/sample_portraits/sample_04.png",
     },
+    {
+        "label": "Thử 5",
+        "filename": "mau_05.png",
+        "path": "assets/sample_portraits/sample_05.png",
+    },
 ]
 
 
