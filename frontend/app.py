@@ -100,19 +100,21 @@ def _sample_src_for_click_widget(row: Any) -> Any:
 
 
 def _render_try_sample_demos() -> None:
-    """Kiểu remove.bg: chữ full-width + hàng 4 ảnh riêng (mobile không bị xếp 1 cột lệch)."""
-    st.markdown(
-        """
+    """Kiểu remove.bg: chữ phẳng bên trái + hàng ảnh mẫu (không ô nền tối)."""
+    n = len(SAMPLE_DEMOS)
+    cols = st.columns([2.15] + [1.0] * n, gap="large")
+    with cols[0]:
+        st.markdown(
+            """
 <div class="p2c-try-light">
   <p class="p2c-try-light-title">Chưa có ảnh?</p>
   <p class="p2c-try-light-sub">Thử một trong các ảnh sau — <strong>bấm trực tiếp vào ảnh</strong> để thêm vào danh sách.</p>
 </div>
 """,
-        unsafe_allow_html=True,
-    )
-    thumbs = st.columns(len(SAMPLE_DEMOS), gap="small")
+            unsafe_allow_html=True,
+        )
     for i, row in enumerate(SAMPLE_DEMOS):
-        with thumbs[i]:
+        with cols[i + 1]:
             st.markdown(
                 '<div class="p2c-sample-thumb-marker" aria-hidden="true"></div>',
                 unsafe_allow_html=True,

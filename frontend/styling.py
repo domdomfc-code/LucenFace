@@ -292,29 +292,16 @@ def inject_app_css() -> None:
             border: 1px solid rgba(0, 91, 196, 0.2);
           }}
 
-          /* Ảnh mẫu: hàng chỉ có 4 cột — căn giữa (desktop + mobile) */
-          section.main div[data-testid="stHorizontalBlock"]:has(.p2c-sample-thumb-marker) {{
-            justify-content: center !important;
-            width: 100% !important;
-            max-width: 28rem;
-            margin-left: auto !important;
-            margin-right: auto !important;
-            gap: 0.35rem !important;
-          }}
-          section.main div[data-testid="stHorizontalBlock"]:has(.p2c-sample-thumb-marker) > div {{
-            justify-content: center !important;
+          /* Hàng ảnh mẫu kiểu remove.bg: chữ phẳng + thumbnail */
+          div[data-testid="stHorizontalBlock"]:has(.p2c-try-light):has(.p2c-sample-thumb-marker) {{
+            align-items: center !important;
           }}
           .p2c-try-light {{
             display: flex;
             flex-direction: column;
             justify-content: center;
-            align-items: center;
-            text-align: center;
-            min-height: auto;
-            padding: 0.35rem 0.75rem 0.85rem;
-            max-width: 22rem;
-            margin-left: auto;
-            margin-right: auto;
+            min-height: 88px;
+            padding: 0.2rem 0.75rem 0.2rem 0;
           }}
           .p2c-try-light-title {{
             margin: 0 0 0.25rem 0;
@@ -330,7 +317,7 @@ def inject_app_css() -> None:
             font-weight: 600;
             color: var(--muted);
             line-height: 1.4;
-            max-width: 20rem;
+            max-width: 22rem;
           }}
           /* Ảnh mẫu: bo góc rõ — overflow trên wrapper để iframe bị clip đúng hình */
           section.main [data-testid="column"]:has(.p2c-sample-thumb-marker) [data-testid="stIFrame"] {{
@@ -353,28 +340,11 @@ def inject_app_css() -> None:
             color: #71717a;
             line-height: 1.45;
             margin-top: 0.65rem;
-            max-width: 36rem;
-            margin-left: auto;
-            margin-right: auto;
-            text-align: center;
-            padding: 0 0.5rem;
+            max-width: 52rem;
           }}
           .p2c-try-disclaimer a {{
             color: #a5b4fc;
             text-decoration: underline;
-          }}
-
-          @media (max-width: 640px) {{
-            section.main div[data-testid="stHorizontalBlock"]:has(.p2c-sample-thumb-marker) {{
-              max-width: 100%;
-              box-sizing: border-box;
-            }}
-            .p2c-try-light-title {{
-              font-size: 1.1rem;
-            }}
-            .p2c-try-light-sub {{
-              font-size: 0.88rem;
-            }}
           }}
 
           .stButton > button {{
