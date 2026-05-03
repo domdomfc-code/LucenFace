@@ -21,6 +21,7 @@ def inject_app_css() -> None:
           }}
 
           .stApp {{
+            color-scheme: light;
             background:
               radial-gradient(1000px 500px at 20% 0%, rgba(0, 91, 196, 0.14), rgba(0,0,0,0) 60%),
               radial-gradient(900px 500px at 90% 10%, rgba(56, 189, 248, 0.14), rgba(0,0,0,0) 60%),
@@ -113,10 +114,16 @@ def inject_app_css() -> None:
             margin: 0.35rem 0 0.2rem 0;
             letter-spacing: -0.03em;
           }}
+          .app-subtitle-wrap {{
+            max-width: 42rem;
+            margin-bottom: 1rem;
+          }}
           .app-subtitle {{
             color: var(--muted);
-            margin-bottom: 1.0rem;
+            margin: 0;
             font-weight: 600;
+            line-height: 1.55;
+            font-size: 0.98rem;
           }}
           .card {{
             background: var(--card);
@@ -184,12 +191,12 @@ def inject_app_css() -> None:
           }}
           section.main [data-testid="stFileUploader"] > div {{
             background: #1e1e24 !important;
-            border: 1px solid rgba(255, 255, 255, 0.08) !important;
-            border-top: 1px dashed rgba(255, 255, 255, 0.18) !important;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
-            border-radius: 0 !important;
-            padding: 1.1rem 1.25rem 1.15rem !important;
-            box-shadow: none !important;
+            border: 1px solid rgba(255, 255, 255, 0.1) !important;
+            border-top: 1px dashed rgba(255, 255, 255, 0.2) !important;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1) !important;
+            border-radius: 0 0 16px 16px !important;
+            padding: 1.1rem 1.25rem 1.2rem !important;
+            box-shadow: 0 14px 36px rgba(15, 23, 42, 0.14) !important;
           }}
           section.main [data-testid="stFileUploader"] label {{
             color: rgba(255, 255, 255, 0.88) !important;
@@ -224,15 +231,19 @@ def inject_app_css() -> None:
             filter: brightness(1.08);
           }}
 
+          section.main [data-testid="column"]:has(.p2c-upload-hero-top) {{
+            margin-bottom: 0.35rem;
+          }}
           .p2c-upload-hero-top {{
             text-align: center;
             background: #1e1e24;
             color: rgba(255, 255, 255, 0.92);
             border-radius: 16px 16px 0 0;
             padding: 2rem 1.5rem 1.15rem;
-            border: 1px solid rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.1);
             border-bottom: none;
             margin-bottom: 0;
+            box-shadow: 0 10px 28px rgba(15, 23, 42, 0.1);
           }}
           .p2c-upload-hero-top .p2c-upload-icon {{
             display: inline-flex;

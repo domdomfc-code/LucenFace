@@ -171,23 +171,19 @@ def main() -> None:
 
     _git = git_short_sha()
     _where = "Cloud" if is_streamlit_cloud() else "Local"
-    _rev_line = f"Build {APP_BUILD}"
-    if _git:
-        _rev_line += f" · Git {_git}"
 
     st.markdown(
-        f"""
+        """
         <div class="topbar">
           <div class="brand">
             <div class="brand-badge"></div>
             <div>
               <div class="brand-title">LucenFace</div>
-              <div class="brand-sub">Portrait Standardizer • {_rev_line} · {_where}</div>
+              <div class="brand-sub">Chuẩn hóa chân dung · batch &amp; ZIP</div>
             </div>
           </div>
-            <div class="top-actions">
-            <span class="pill">Batch ≤ 50 ảnh</span>
-            <span class="pill">Nền xanh (tùy chọn)</span>
+          <div class="top-actions">
+            <span class="pill">≤ 50 ảnh · Cài đặt trong sidebar ☰</span>
           </div>
         </div>
         """,
@@ -196,16 +192,20 @@ def main() -> None:
 
     st.markdown(f'<div class="app-title">{APP_TITLE}</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="app-subtitle">Kéo & thả ảnh để chuẩn hóa (khung tùy chọn, cân bằng sáng; có thể ghép nền xanh hoặc chỉ giữ nền gốc — tải ZIP).</div>',
+        '<div class="app-subtitle-wrap"><div class="app-subtitle">'
+        "Upload hoặc dán <strong>JPG/PNG</strong>, kiểm tra rồi xử lý — tải <strong>ZIP</strong>. "
+        "Tỷ lệ khung, nền xanh, rembg và tùy chọn nâng cao nằm trong <strong>sidebar (☰)</strong>."
+        "</div></div>",
         unsafe_allow_html=True,
     )
 
     with st.sidebar:
-        _cap = f"**Build:** `{APP_BUILD}` · **Chạy:** {_where}"
-        if _git:
-            _cap += f" · **Git:** `{_git}`"
-        _cap += " — UI `frontend/`, xử lý `backend/`"
-        st.caption(_cap)
+        with st.expander("Thông tin phiên bản", expanded=False):
+            st.markdown(f"- **Build:** `{APP_BUILD}`")
+            st.markdown(f"- **Môi trường:** {_where}")
+            if _git:
+                st.markdown(f"- **Git:** `{_git}`")
+            st.caption("UI `frontend/` · xử lý `backend/`")
         with st.expander("Đối chiếu bản deploy", expanded=False):
             st.markdown(
                 """
@@ -237,19 +237,30 @@ def main() -> None:
                         "Gợi ý (Python 3.13): `pip install -r requirements-local-py313.txt` trong venv."
                     )
 
-        st.markdown("### Hướng dẫn nhanh")
-        st.markdown(
-            """
-            - **Ảnh hợp lệ**: JPG/PNG, chân dung rõ mặt, **chỉ 1 khuôn mặt**.
-            - **Tiêu chuẩn kiểm tra**:
-              - Vị trí mặt gần trung tâm ngang
-              - Tỷ lệ khuôn mặt hợp lý
-              - Độ sáng & tương phản đủ
-              - **Phông nền**: ảnh gốc & khung đầu ra — viền gần **một màu** (đạt chuẩn) hay không
-            - **Khung**: mặc định giữ ảnh gốc (scale); tự cắt theo mặt nếu mặt quá nhỏ trong ảnh (dưới ~44% chiều cao), hoặc nền không đơn sắc, hoặc bạn bật cắt mặt.
-            - **Ghép nền xanh**: khi bật rembg, nếu khung đầu ra **đã có phông một màu** thì **không** ghép thêm (trừ khi bạn bật “luôn ghép”).
-            """
-        )
+        with st.expander("Ảnh đầu vào", expanded=False):
+            st.markdown(
+                """
+                - **JPG/PNG**, chân dung **một mặt** rõ; không hỗ trợ HEIC (export JPG).
+                - Tối đa **50 ảnh**/lần (upload + clipboard + ảnh mẫu).
+                - **Bước 1** kiểm tra · **Bước 2** xử lý — chỉ ảnh đã tick.
+                """
+            )
+        with st.expander("Khung & crop", expanded=False):
+            st.markdown(
+                """
+                - **Tỷ lệ** đầu ra: 3×4 hoặc 4×6 (ô bên dưới).
+                - **Cắt theo mặt**: bật để chuẩn chân dung; tắt thì giữ khung, tự crop khi mặt quá nhỏ hoặc nền phức tạp.
+                - **Letterbox** khi khung vượt ảnh — giữ tâm (mũi / bbox tùy chọn).
+                """
+            )
+        with st.expander("Nền xanh & rembg", expanded=False):
+            st.markdown(
+                """
+                - Bật **Ghép nền xanh**: remove.bg (API) hoặc **rembg** local.
+                - Phông **một màu** thường **không** tách nền — trừ khi bật *luôn ghép*.
+                - Màu nền chỉnh bằng **color picker** khi đã bật ghép.
+                """
+            )
         st.markdown("---")
         ratio = st.selectbox("Tỷ lệ ảnh đầu ra", ["3x4", "4x6"], index=0)
         prefer_face_crop = st.toggle(
