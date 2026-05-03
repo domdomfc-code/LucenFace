@@ -134,7 +134,7 @@ def main() -> None:
         replace_blue_bg = st.toggle(
             "Tự động ghép nền xanh",
             value=True,
-            help="Bật: tách nền (rembg local hoặc remove.bg API) rồi ghép màu. Tắt: chỉ crop/scale, giữ nền gốc.",
+            help="Bật: tách nền (mặc định remove.bg API nếu có khóa; có thể đổi sang rembg local) rồi ghép màu. Tắt: chỉ crop/scale, giữ nền gốc.",
         )
         force_blue_despite_uniform = False
         rembg_engine = "none"
@@ -203,8 +203,8 @@ def main() -> None:
             _eng_pick = st.radio(
                 "Nguồn tách nền",
                 options=["rembg (local, miễn phí)", "remove.bg (API — gần chất lượng web upload)"],
-                index=0,
-                help="remove.bg tương đương trang [remove.bg/upload](https://www.remove.bg/vi/upload) — cần API key.",
+                index=1,
+                help="Mặc định: remove.bg (cần `REMOVEBG_API_KEY`). Có thể chọn rembg local — không tốn quota API.",
             )
             if _eng_pick.startswith("remove.bg"):
                 rembg_engine = "remove_bg_api"

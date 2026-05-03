@@ -11,7 +11,41 @@
 ## Cấu trúc
 - `frontend/`: Streamlit UI
 - `backend/`: xử lý ảnh (OpenCV/MediaPipe/rembg)
+- `api/`: FastAPI (dùng chung pipeline với Streamlit)
+- `web/`: Next.js UI (gọi API)
 - `app.py`: entrypoint cho Streamlit Cloud
+
+## Giao diện Next.js + API (khuyến nghị khi cần UX chuyên nghiệp)
+
+**Terminal 1 — Python (từ thư mục gốc `p2c`):**
+
+```bash
+pip install -r requirements.txt
+uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+Tương đương: `npm run dev:api` (lắng nghe `127.0.0.1:8000`).
+
+**Terminal 2 — frontend:**
+
+```bash
+cd web
+npm install
+copy .env.local.example .env.local   # Windows; Linux/macOS: cp ...
+npm run dev
+```
+
+Hoặc **một lệnh từ thư mục gốc** (sau khi đã `cd web && npm install` ít nhất một lần):
+
+```bash
+npm run dev:web
+```
+
+Mở [http://127.0.0.1:3000](http://127.0.0.1:3000) (hoặc `http://localhost:3000`). **Nếu trình duyệt báo “từ chối kết nối”** (`ERR_CONNECTION_REFUSED`), nghĩa là chưa chạy `npm run dev` / `npm run dev:web` — static như `/lucenface-logo.png` chỉ có khi Next đang chạy.
+
+API: [http://127.0.0.1:8000](http://127.0.0.1:8000) với `npm run dev:api` từ gốc repo (cần `pip install -r requirements.txt`). Đổi URL API qua `NEXT_PUBLIC_API_URL` trong `web/.env.local`.
+
+remove.bg: đặt biến môi trường `REMOVEBG_API_KEY` trước khi chạy `uvicorn`. CORS: mặc định cho phép `http://localhost:3000`; danh sách khác qua `WEB_CORS_ORIGINS` (phân tách bằng dấu phẩy).
 
 ## Cài đặt & chạy
 

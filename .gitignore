@@ -26,6 +26,7 @@ venv/
 env/
 .env
 .env.*
+!web/.env.local.example
 
 # IDE / OS
 .idea/
@@ -42,3 +43,12 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Next.js
+web/node_modules/
+web/.next/
+web/out/
+web/.env.local
+
+# API
+*.db

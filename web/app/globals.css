@@ -1,0 +1,22 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --brand: #005bc4;
+  --radius: 12px;
+}
+
+body {
+  @apply bg-surface text-surface-ink antialiased;
+  background-image:
+    radial-gradient(1000px 500px at 20% 0%, rgba(0, 91, 196, 0.12), transparent 60%),
+    radial-gradient(900px 500px at 90% 10%, rgba(56, 189, 248, 0.12), transparent 60%);
+  min-height: 100vh;
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}

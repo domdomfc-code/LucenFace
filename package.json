@@ -1,0 +1,8 @@
+{
+  "name": "p2c",
+  "private": true,
+  "scripts": {
+    "dev:web": "npm --prefix web run dev",
+    "dev:api": "python -m uvicorn api.main:app --reload --host 127.0.0.1 --port 8000"
+  }
+}
