@@ -4,6 +4,7 @@ Chạy từ gốc dự án: `streamlit run app.py` (khuyến nghị) hoặc `str
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import io
 import json
@@ -40,6 +41,24 @@ from frontend.streamlit_helpers import (
 from frontend.styling import inject_app_css, render_sidebar_reopen_button
 from frontend.thumbnails import render_image_thumbnails, thumbnail_checkbox_key
 from paste_image_component import paste_image_from_clipboard
+
+_BRAND_LOGO_PATH = Path(__file__).resolve().parent.parent / "assets" / "branding" / "lucenface_logo.png"
+
+
+def _page_icon_arg() -> str:
+    """Đường dẫn file cho tab trình duyệt; emoji nếu chưa có logo trong repo."""
+    return str(_BRAND_LOGO_PATH.resolve()) if _BRAND_LOGO_PATH.is_file() else "🪪"
+
+
+def _brand_logo_markup() -> str:
+    """Logo header: PNG trong repo hoặc ô gradient cũ nếu thiếu file."""
+    if not _BRAND_LOGO_PATH.is_file():
+        return '<div class="brand-badge" aria-hidden="true"></div>'
+    b64 = base64.b64encode(_BRAND_LOGO_PATH.read_bytes()).decode("ascii")
+    return (
+        f'<img class="brand-logo" src="data:image/png;base64,{b64}" '
+        'width="34" height="34" alt="LucenFace" />'
+    )
 
 
 def _work_items_fingerprint(items: List[Tuple[str, bytes]]) -> Tuple[Tuple[str, int], ...]:
@@ -219,7 +238,7 @@ def _render_try_sample_demos() -> None:
 def main() -> None:
     st.set_page_config(
         page_title=APP_TITLE,
-        page_icon="🪪",
+        page_icon=_page_icon_arg(),
         layout="wide",
         initial_sidebar_state="expanded",
     )
@@ -236,10 +255,10 @@ def main() -> None:
     _where = "Cloud" if is_streamlit_cloud() else "Local"
 
     st.markdown(
-        """
+        f"""
         <div class="topbar">
           <div class="brand">
-            <div class="brand-badge"></div>
+            {_brand_logo_markup()}
             <div>
               <div class="brand-title">LucenFace</div>
               <div class="brand-sub">Chuẩn hóa chân dung · batch &amp; ZIP</div>

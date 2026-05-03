@@ -80,6 +80,16 @@ def inject_app_css() -> None:
             background: linear-gradient(135deg, var(--blue), #38bdf8);
             box-shadow: 0 10px 22px rgba(0,91,196,0.20);
           }}
+          .brand-logo {{
+            width: 34px;
+            height: 34px;
+            border-radius: 10px;
+            object-fit: contain;
+            display: block;
+            flex-shrink: 0;
+            box-shadow: 0 8px 18px rgba(0, 91, 196, 0.18);
+            background: #0a0a0f;
+          }}
           .brand-title {{
             font-size: 1.05rem;
             line-height: 1.1;
