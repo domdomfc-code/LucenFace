@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import html
 import io
 import json
 import platform
@@ -19,7 +20,16 @@ from PIL import Image, ImageDraw, ImageOps
 import frontend.bootstrap  # noqa: F401 — đưa thư mục gốc dự án vào sys.path
 from frontend import backend_lazy
 from frontend.backend_lazy import ensure_image_backend
-from frontend.config import APP_BUILD, APP_TITLE, BLUE
+from frontend.config import (
+    APP_BRAND_NAME,
+    APP_BRAND_TAGLINE,
+    APP_BUILD,
+    APP_INTRO_HTML,
+    APP_TIP_CAPTION,
+    APP_TITLE,
+    APP_TOPBAR_PILL,
+    BLUE,
+)
 from frontend.deploy_info import git_short_sha, is_streamlit_cloud
 from frontend.image_io import (
     decode_data_url_image,
@@ -57,7 +67,7 @@ def _brand_logo_markup() -> str:
     b64 = base64.b64encode(_BRAND_LOGO_PATH.read_bytes()).decode("ascii")
     return (
         f'<img class="brand-logo" src="data:image/png;base64,{b64}" '
-        'width="34" height="34" alt="LucenFace" />'
+        f'width="34" height="34" alt="{html.escape(APP_BRAND_NAME)}" />'
     )
 
 
@@ -227,12 +237,6 @@ def _render_try_sample_demos() -> None:
                                     st.rerun()
                                 except Exception as e:
                                     st.error(f"Không tải được ảnh mẫu: {e}")
-    st.markdown(
-        '<p class="p2c-try-disclaimer">'
-        "Ảnh mẫu cấu hình trong <code>frontend/sample_images.py</code> (file trong repo hoặc URL). "
-        "Khi tải ảnh của bạn lên, bạn chịu trách nhiệm về nội dung — bổ sung Điều khoản & Chính sách quyền riêng tư khi triển khai công khai.</p>",
-        unsafe_allow_html=True,
-    )
 
 
 def main() -> None:
@@ -260,24 +264,21 @@ def main() -> None:
           <div class="brand">
             {_brand_logo_markup()}
             <div>
-              <div class="brand-title">LucenFace</div>
-              <div class="brand-sub">Chuẩn hóa chân dung · batch &amp; ZIP</div>
+              <div class="brand-title">{html.escape(APP_BRAND_NAME)}</div>
+              <div class="brand-sub">{html.escape(APP_BRAND_TAGLINE)}</div>
             </div>
           </div>
           <div class="top-actions">
-            <span class="pill">≤ 50 ảnh · Cài đặt trong sidebar ☰</span>
+            <span class="pill">{html.escape(APP_TOPBAR_PILL)}</span>
           </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    st.markdown(f'<div class="app-title">{APP_TITLE}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="app-title">{html.escape(APP_TITLE)}</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="app-subtitle-wrap"><div class="app-subtitle">'
-        "Upload hoặc dán <strong>JPG/PNG</strong>, kiểm tra rồi xử lý — tải <strong>ZIP</strong>. "
-        "Tỷ lệ khung, nền xanh, rembg và tùy chọn nâng cao nằm trong <strong>sidebar (☰)</strong>."
-        "</div></div>",
+        f'<div class="app-subtitle-wrap"><div class="app-subtitle">{APP_INTRO_HTML}</div></div>',
         unsafe_allow_html=True,
     )
 
@@ -453,9 +454,7 @@ def main() -> None:
     else:
         blue_rgb = tuple(int(BLUE.lstrip("#")[i : i + 2], 16) for i in (0, 2, 4))
 
-    st.caption(
-        "Mẹo: ảnh rõ mặt, thẳng góc — tùy chọn ghép nền xanh và rembg nằm trong **sidebar** (☰)."
-    )
+    st.caption(APP_TIP_CAPTION)
     _g_left, _g_mid, _g_right = st.columns([1, 3.2, 1])
     with _g_mid:
         st.markdown(

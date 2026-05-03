@@ -367,18 +367,6 @@ def inject_app_css() -> None:
             }}
           }}
 
-          .p2c-try-disclaimer {{
-            font-size: 0.78rem;
-            color: #71717a;
-            line-height: 1.45;
-            margin-top: 0.65rem;
-            max-width: 52rem;
-          }}
-          .p2c-try-disclaimer a {{
-            color: #a5b4fc;
-            text-decoration: underline;
-          }}
-
           .stButton > button {{
             border-radius: 12px;
             font-weight: 800;
