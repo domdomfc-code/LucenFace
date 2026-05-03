@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from frontend.config import BG, BLUE
+from frontend.config import BG, BLUE, TEXT
 
 
 def inject_app_css() -> None:
@@ -14,8 +14,8 @@ def inject_app_css() -> None:
             --blue: {BLUE};
             --bg: {BG};
             --card: #ffffff;
-            --text: #0f172a;
-            --muted: #64748b;
+            --text: {TEXT};
+            --muted: rgba(84, 97, 108, 0.78);
             --border: rgba(2, 6, 23, 0.10);
             --shadow: 0 10px 30px rgba(2, 6, 23, 0.06);
           }}
@@ -29,6 +29,10 @@ def inject_app_css() -> None:
 
           section.main > div {{
             padding-top: 1.25rem;
+          }}
+          section.main .stMarkdown p,
+          section.main .stMarkdown li {{
+            color: var(--text);
           }}
 
           /* Không ép width sidebar bằng !important: Streamlit khi thu gọn cần co width ~0;
@@ -163,11 +167,11 @@ def inject_app_css() -> None:
           }}
           .check-name {{
             font-weight: 700;
-            color: #111827;
+            color: var(--text);
             min-width: 160px;
           }}
           .check-msg {{
-            color: #374151;
+            color: var(--muted);
             opacity: 0.95;
           }}
           .muted {{
@@ -271,7 +275,7 @@ def inject_app_css() -> None:
             margin-top: 0.75rem;
             border-radius: 12px;
             background: rgba(0, 91, 196, 0.12);
-            color: #0f172a;
+            color: var(--text);
             font-weight: 700;
             font-size: 0.92rem;
             border: 1px solid rgba(0, 91, 196, 0.2);
@@ -360,7 +364,7 @@ def render_sidebar_reopen_button() -> None:
   })()"
   style="font-size:1.05rem;line-height:1;padding:0.45rem 0.55rem;border-radius:10px;
          border:1px solid rgba(15,23,42,0.12);background:rgba(255,255,255,0.96);
-         cursor:pointer;box-shadow:0 4px 14px rgba(15,23,42,0.12);color:#0f172a;">
+         cursor:pointer;box-shadow:0 4px 14px rgba(15,23,42,0.12);color:__P2C_TEXT__;">
   ☰
 </button>
 </div>
@@ -384,7 +388,7 @@ def render_sidebar_reopen_button() -> None:
 })();
 </script>
 </body></html>
-"""
+""".replace("__P2C_TEXT__", TEXT)
     iframe = getattr(st, "iframe", None)
     if iframe is not None:
         iframe(html, height=52)
