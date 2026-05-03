@@ -335,6 +335,47 @@ def inject_app_css() -> None:
             border-radius: 14px !important;
             display: block !important;
           }}
+
+          /* Chỉ mobile: chữ full-width + 4 ảnh một hàng căn giữa — PC giữ nguyên 1 hàng 5 cột */
+          @media (max-width: 768px) {{
+            section.main div[data-testid="stHorizontalBlock"]:has(.p2c-try-light):has(.p2c-sample-thumb-marker) {{
+              flex-wrap: wrap !important;
+              justify-content: center !important;
+              align-content: center !important;
+              gap: 0.5rem !important;
+            }}
+            section.main div[data-testid="stHorizontalBlock"]:has(.p2c-try-light):has(.p2c-sample-thumb-marker) > div {{
+              flex-wrap: wrap !important;
+              justify-content: center !important;
+              align-content: center !important;
+              gap: 0.5rem !important;
+            }}
+            section.main div[data-testid="stHorizontalBlock"]:has(.p2c-try-light):has(.p2c-sample-thumb-marker) [data-testid="column"]:has(.p2c-try-light) {{
+              flex: 1 1 100% !important;
+              width: 100% !important;
+              max-width: 100% !important;
+              min-width: 0 !important;
+            }}
+            section.main div[data-testid="stHorizontalBlock"]:has(.p2c-try-light):has(.p2c-sample-thumb-marker) [data-testid="column"]:has(.p2c-sample-thumb-marker) {{
+              flex: 0 0 calc(23% - 0.2rem) !important;
+              width: auto !important;
+              max-width: 96px !important;
+              min-width: 0 !important;
+            }}
+            section.main div[data-testid="stHorizontalBlock"]:has(.p2c-try-light):has(.p2c-sample-thumb-marker) .p2c-try-light {{
+              align-items: center;
+              text-align: center;
+              padding: 0.35rem 0.75rem 0.5rem;
+              min-height: auto;
+              max-width: 100%;
+              margin-left: auto;
+              margin-right: auto;
+            }}
+            section.main div[data-testid="stHorizontalBlock"]:has(.p2c-try-light):has(.p2c-sample-thumb-marker) .p2c-try-light-sub {{
+              max-width: 100%;
+            }}
+          }}
+
           .p2c-try-disclaimer {{
             font-size: 0.78rem;
             color: #71717a;
