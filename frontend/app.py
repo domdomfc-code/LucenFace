@@ -25,6 +25,7 @@ from frontend.image_io import (
     sniff_image_kind,
 )
 from frontend.processor_service import get_cached_portrait_processor, run_portrait_process
+from frontend.sample_images import SAMPLE_DEMOS, fetch_demo_bytes
 from frontend.streamlit_helpers import (
     cv2_troubleshoot_markdown,
     make_zip,
@@ -53,6 +54,44 @@ def _pil_from_raw(raw: bytes) -> Image.Image | None:
         return None
 
 
+def _render_try_sample_demos() -> None:
+    """Hàng ảnh mẫu một bấm (khi chưa có upload / clipboard / mẫu)."""
+    c_left, c_right = st.columns([1.12, 2.35])
+    with c_left:
+        st.markdown(
+            """
+<div class="p2c-try-inner">
+  <p class="p2c-try-title">Chưa có ảnh?</p>
+  <p class="p2c-try-sub">Thử một trong các ảnh mẫu — một bấm để đưa vào danh sách xử lý.</p>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+    with c_right:
+        thumbs = st.columns(4)
+        for i, row in enumerate(SAMPLE_DEMOS):
+            with thumbs[i]:
+                st.image(row["url"], use_container_width=True)
+                if st.button(
+                    row["label"],
+                    key=f"p2c_try_sample_{i}",
+                    use_container_width=True,
+                    type="secondary",
+                ):
+                    try:
+                        raw = fetch_demo_bytes(row["url"])
+                        st.session_state.setdefault("p2c_demo_staged", []).append((row["filename"], raw))
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Không tải được ảnh mẫu: {e}")
+    st.markdown(
+        '<p class="p2c-try-disclaimer">'
+        'Ảnh mẫu từ <a href="https://unsplash.com/license" target="_blank" rel="noopener noreferrer">Unsplash</a> (chỉ phục vụ demo). '
+        "Khi tải ảnh của bạn lên, bạn chịu trách nhiệm về nội dung — bổ sung Điều khoản & Chính sách quyền riêng tư khi triển khai công khai.</p>",
+        unsafe_allow_html=True,
+    )
+
+
 def main() -> None:
     st.set_page_config(
         page_title=APP_TITLE,
@@ -60,6 +99,8 @@ def main() -> None:
         layout="wide",
         initial_sidebar_state="expanded",
     )
+    if "p2c_demo_staged" not in st.session_state:
+        st.session_state["p2c_demo_staged"] = []
     inject_app_css()
     render_sidebar_reopen_button()
 
@@ -285,14 +326,17 @@ def main() -> None:
         )
 
         upload_list = list(uploads) if uploads else []
-        if not upload_list and not pasted_data_url:
+        _demo_staged_check: List[Tuple[str, bytes]] = list(st.session_state.get("p2c_demo_staged") or [])
+        if not upload_list and not pasted_data_url and not _demo_staged_check:
             st.markdown(
-                '<div class="p2c-upload-empty">Chưa có ảnh — hãy <strong>chọn tệp</strong> hoặc <strong>dán</strong> từ clipboard để bắt đầu.</div>',
+                '<div class="p2c-upload-empty">Chưa có ảnh — hãy <strong>chọn tệp</strong>, <strong>dán</strong> từ clipboard hoặc <strong>thử ảnh mẫu</strong> bên dưới.</div>',
                 unsafe_allow_html=True,
             )
+            _render_try_sample_demos()
             return
 
-    staged = gather_staged_images(upload_list, pasted_data_url)
+    demo_staged: List[Tuple[str, bytes]] = list(st.session_state.get("p2c_demo_staged") or [])
+    staged = demo_staged + gather_staged_images(upload_list, pasted_data_url)
     if not staged:
         if pasted_data_url and not upload_list:
             _dec, reason = decode_data_url_image_verbose(pasted_data_url)
@@ -302,10 +346,12 @@ def main() -> None:
         return
 
     if len(staged) > 50:
-        st.error("Tối đa 50 ảnh mỗi lần (upload + dán tính chung). Vui lòng giảm số lượng và thử lại.")
+        st.error(
+            "Tối đa 50 ảnh mỗi lần (upload + dán + ảnh mẫu). Vui lòng giảm số lượng và thử lại."
+        )
         return
 
-    c1, c2 = st.columns([1, 2], gap="small")
+    c1, c2, c3 = st.columns([1, 2, 1], gap="small")
     with c1:
         if st.button("Xóa ảnh clipboard", width="content"):
             st.session_state["p2c_clipboard_paste_nonce"] = int(st.session_state.get("p2c_clipboard_paste_nonce", 0)) + 1
@@ -316,6 +362,15 @@ def main() -> None:
             if dec:
                 blob, fn = dec
                 st.success(f"Đã nhận ảnh từ clipboard: `{fn}` ({len(blob)/1024:.0f} KB).")
+    with c3:
+        if st.session_state.get("p2c_demo_staged"):
+            if st.button(
+                "Xóa ảnh mẫu",
+                width="content",
+                help="Gỡ các ảnh đã thêm bằng nút Thử 1–4.",
+            ):
+                st.session_state["p2c_demo_staged"] = []
+                st.rerun()
 
     if "p2c_selected" not in st.session_state:
         st.session_state["p2c_selected"] = {}

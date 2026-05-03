@@ -277,6 +277,43 @@ def inject_app_css() -> None:
             border: 1px solid rgba(0, 91, 196, 0.2);
           }}
 
+          /* “Chưa có ảnh? Thử mẫu” — thẻ trái kiểu remove.bg */
+          .p2c-try-inner {{
+            background: #27272a;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 14px;
+            padding: 1.1rem 1.15rem;
+            min-height: 11.5rem;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+          }}
+          .p2c-try-inner .p2c-try-title {{
+            color: #f4f4f5;
+            font-size: 1.12rem;
+            font-weight: 900;
+            letter-spacing: -0.02em;
+            margin: 0 0 0.35rem 0;
+          }}
+          .p2c-try-inner .p2c-try-sub {{
+            color: #a1a1aa;
+            font-size: 0.88rem;
+            font-weight: 600;
+            margin: 0;
+            line-height: 1.45;
+          }}
+          .p2c-try-disclaimer {{
+            font-size: 0.78rem;
+            color: #71717a;
+            line-height: 1.45;
+            margin-top: 0.65rem;
+            max-width: 52rem;
+          }}
+          .p2c-try-disclaimer a {{
+            color: #a5b4fc;
+            text-decoration: underline;
+          }}
+
           .stButton > button {{
             border-radius: 12px;
             font-weight: 800;
