@@ -35,7 +35,7 @@ from frontend.streamlit_helpers import (
     result_to_checks_dict,
 )
 from frontend.styling import inject_app_css, render_sidebar_reopen_button
-from frontend.thumbnails import render_image_thumbnails
+from frontend.thumbnails import render_image_thumbnails, thumbnail_checkbox_key
 from paste_image_component import paste_image_from_clipboard
 
 
@@ -404,11 +404,17 @@ def main() -> None:
     with a1:
         if st.button("Chọn tất cả", width="content"):
             for i, (fname, _) in enumerate(staged):
-                selected[f"sel::{i}::{fname}"] = True
+                sk = f"sel::{i}::{fname}"
+                selected[sk] = True
+                st.session_state[thumbnail_checkbox_key(i, fname)] = True
+            st.rerun()
     with a2:
         if st.button("Bỏ chọn", width="content"):
             for i, (fname, _) in enumerate(staged):
-                selected[f"sel::{i}::{fname}"] = False
+                sk = f"sel::{i}::{fname}"
+                selected[sk] = False
+                st.session_state[thumbnail_checkbox_key(i, fname)] = False
+            st.rerun()
     with a3:
         st.caption("Bạn có thể bỏ chọn ảnh không muốn xử lý.")
 

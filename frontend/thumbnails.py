@@ -8,6 +8,11 @@ import streamlit as st
 from PIL import Image, ImageOps
 
 
+def thumbnail_checkbox_key(idx: int, fname: str) -> str:
+    """Key session_state của checkbox xem trước — dùng chung khi Chọn tất cả / Bỏ chọn."""
+    return f"thumb_cb_{idx}_{hash(fname)}"
+
+
 def render_image_thumbnails(
     staged: List[Tuple[str, bytes]],
     selected: Dict[str, bool],
@@ -29,7 +34,7 @@ def render_image_thumbnails(
                 selected[key] = st.checkbox(
                     "Chọn",
                     value=selected.get(key, True),
-                    key=f"thumb_cb_{idx}_{hash(fname)}",
+                    key=thumbnail_checkbox_key(idx, fname),
                     label_visibility="collapsed",
                 )
                 try:
