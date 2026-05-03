@@ -1,4 +1,5 @@
 streamlit>=1.43,<2
+streamlit-image-coordinates>=0.1.6,<1
 pyarrow>=14,<21
 requests>=2.31,<3
 opencv-python-headless==4.12.0.88

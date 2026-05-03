@@ -6,10 +6,13 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import platform
+from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 import streamlit as st
+from streamlit_image_coordinates import streamlit_image_coordinates
 from PIL import Image, ImageOps
 
 import frontend.bootstrap  # noqa: F401 — đưa thư mục gốc dự án vào sys.path
@@ -55,15 +58,27 @@ def _pil_from_raw(raw: bytes) -> Image.Image | None:
         return None
 
 
+def _sample_src_for_click_widget(row: Any) -> Any:
+    """URL str hoặc PIL.Image cho streamlit_image_coordinates."""
+    src = sample_image_for_display(row)
+    if isinstance(src, str) and (src.startswith("http://") or src.startswith("https://")):
+        return src
+    p = Path(src)
+    if p.is_file():
+        with Image.open(p) as im:
+            return im.convert("RGB").copy()
+    return src
+
+
 def _render_try_sample_demos() -> None:
-    """Hàng ảnh mẫu một bấm (khi chưa có upload / clipboard / mẫu)."""
+    """Hàng ảnh mẫu — bấm trực tiếp lên ảnh để thêm (streamlit-image-coordinates)."""
     c_left, c_right = st.columns([1.12, 2.35])
     with c_left:
         st.markdown(
             """
 <div class="p2c-try-inner">
   <p class="p2c-try-title">Chưa có ảnh?</p>
-  <p class="p2c-try-sub">Thử một trong các ảnh mẫu — một bấm để đưa vào danh sách xử lý.</p>
+  <p class="p2c-try-sub">Bấm <strong>trực tiếp vào từng ảnh mẫu</strong> bên phải để thêm vào danh sách xử lý.</p>
 </div>
 """,
             unsafe_allow_html=True,
@@ -72,19 +87,29 @@ def _render_try_sample_demos() -> None:
         thumbs = st.columns(4)
         for i, row in enumerate(SAMPLE_DEMOS):
             with thumbs[i]:
-                st.image(sample_image_for_display(row), use_container_width=True)
-                if st.button(
-                    row["label"],
-                    key=f"p2c_try_sample_{i}",
-                    use_container_width=True,
-                    type="secondary",
-                ):
-                    try:
-                        raw = load_demo_image_bytes(row)
-                        st.session_state.setdefault("p2c_demo_staged", []).append((row["filename"], raw))
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Không tải được ảnh mẫu: {e}")
+                _prev_key = f"p2c_sample_click_prev_{i}"
+                _coord_key = f"p2c_sample_coord_{i}"
+                try:
+                    _click = streamlit_image_coordinates(
+                        _sample_src_for_click_widget(row),
+                        key=_coord_key,
+                    )
+                except Exception as e:
+                    st.caption("Không hiển thị ảnh tương tác")
+                    st.code(str(e))
+                    continue
+                if _click:
+                    _sig = json.dumps(_click, sort_keys=True, default=str)
+                    if _sig != st.session_state.get(_prev_key):
+                        st.session_state[_prev_key] = _sig
+                        try:
+                            raw = load_demo_image_bytes(row)
+                            st.session_state.setdefault("p2c_demo_staged", []).append(
+                                (row["filename"], raw)
+                            )
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Không tải được ảnh mẫu: {e}")
     st.markdown(
         '<p class="p2c-try-disclaimer">'
         "Ảnh mẫu cấu hình trong <code>frontend/sample_images.py</code> (file trong repo hoặc URL). "
