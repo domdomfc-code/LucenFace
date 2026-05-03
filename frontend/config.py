@@ -2,6 +2,6 @@
 
 APP_TITLE = "Chuẩn hóa ảnh chân dung học sinh"
 # Tăng / đổi chuỗi này khi deploy để dễ thấy trên Cloud (topbar + sidebar).
-APP_BUILD = "3.17.4-sample-thumb-layout"
+APP_BUILD = "3.17.6-sample-beside-dark-box"
 BLUE = "#005BC4"
 BG = "#F6F9FF"

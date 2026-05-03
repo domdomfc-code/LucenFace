@@ -58,71 +58,80 @@ def _pil_from_raw(raw: bytes) -> Image.Image | None:
         return None
 
 
-def _sample_src_for_click_widget(row: Any, *, max_side: int = 420) -> Any:
-    """URL str hoặc PIL.Image cho streamlit_image_coordinates (PIL thu nhỏ cạnh dài để layout ổn định)."""
+_SAMPLE_THUMB_PX = 88
+
+
+def _pil_to_square_thumb(im: Image.Image, size: int) -> Image.Image:
+    """Cắt vuông (center crop) rồi resize — giống thumbnail avatar."""
+    im = im.convert("RGB")
+    w, h = im.size
+    side = min(w, h)
+    left = (w - side) // 2
+    top = (h - side) // 2
+    im = im.crop((left, top, left + side, top + side))
+    _resample = getattr(Image, "Resampling", Image).LANCZOS
+    return im.resize((size, size), _resample)
+
+
+def _sample_src_for_click_widget(row: Any) -> Any:
+    """URL str hoặc PIL vuông _SAMPLE_THUMB_PX cho streamlit_image_coordinates."""
     src = sample_image_for_display(row)
     if isinstance(src, str) and (src.startswith("http://") or src.startswith("https://")):
         return src
     p = Path(src)
     if p.is_file():
         with Image.open(p) as im:
-            im = im.convert("RGB")
-            w, h = im.size
-            if max(w, h) > max_side:
-                r = max_side / float(max(w, h))
-                _resample = getattr(Image, "Resampling", Image).LANCZOS
-                im = im.resize((max(1, int(w * r)), max(1, int(h * r))), _resample)
-            return im.copy()
+            return _pil_to_square_thumb(im, _SAMPLE_THUMB_PX)
     return src
 
 
 def _render_try_sample_demos() -> None:
-    """Hàng ảnh mẫu — bấm trực tiếp lên ảnh (full-width row tránh cột co thành vệt dọc)."""
-    c_left, c_right = st.columns([1.12, 2.35])
+    """Ô đen trái + 4 ảnh mẫu nhỏ vuông cùng một hàng (cột phải đủ rộng, width cố định)."""
+    c_left, c_right = st.columns([1.05, 2.95], gap="medium")
     with c_left:
         st.markdown(
             """
 <div class="p2c-try-inner">
   <p class="p2c-try-title">Chưa có ảnh?</p>
-  <p class="p2c-try-sub">Bấm <strong>trực tiếp vào từng ảnh mẫu</strong> (hàng bên dưới) để thêm vào danh sách xử lý.</p>
+  <p class="p2c-try-sub">Bấm <strong>trực tiếp vào từng ảnh mẫu</strong> bên phải để thêm vào danh sách xử lý.</p>
 </div>
 """,
             unsafe_allow_html=True,
         )
     with c_right:
-        st.markdown(
-            '<p style="color:#a1a1aa;font-size:0.88rem;font-weight:600;margin:0;padding-top:0.35rem;">'
-            "↓ Ảnh mẫu — full chiều ngang trang</p>",
-            unsafe_allow_html=True,
-        )
-    thumbs = st.columns(len(SAMPLE_DEMOS), gap="medium")
-    for i, row in enumerate(SAMPLE_DEMOS):
-        with thumbs[i]:
-            _prev_key = f"p2c_sample_click_prev_{i}"
-            _coord_key = f"p2c_sample_coord_{i}"
-            try:
-                _click = streamlit_image_coordinates(
-                    _sample_src_for_click_widget(row),
-                    key=_coord_key,
-                    use_column_width="always",
-                    cursor="pointer",
+        thumbs = st.columns(len(SAMPLE_DEMOS), gap="small")
+        for i, row in enumerate(SAMPLE_DEMOS):
+            with thumbs[i]:
+                st.markdown(
+                    '<div class="p2c-sample-thumb-marker" aria-hidden="true"></div>',
+                    unsafe_allow_html=True,
                 )
-            except Exception as e:
-                st.caption("Không hiển thị ảnh tương tác")
-                st.code(str(e))
-                continue
-            if _click:
-                _sig = json.dumps(_click, sort_keys=True, default=str)
-                if _sig != st.session_state.get(_prev_key):
-                    st.session_state[_prev_key] = _sig
-                    try:
-                        raw = load_demo_image_bytes(row)
-                        st.session_state.setdefault("p2c_demo_staged", []).append(
-                            (row["filename"], raw)
-                        )
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Không tải được ảnh mẫu: {e}")
+                _prev_key = f"p2c_sample_click_prev_{i}"
+                _coord_key = f"p2c_sample_coord_{i}"
+                try:
+                    _click = streamlit_image_coordinates(
+                        _sample_src_for_click_widget(row),
+                        key=_coord_key,
+                        width=_SAMPLE_THUMB_PX,
+                        use_column_width="never",
+                        cursor="pointer",
+                    )
+                except Exception as e:
+                    st.caption("Không hiển thị ảnh tương tác")
+                    st.code(str(e))
+                    continue
+                if _click:
+                    _sig = json.dumps(_click, sort_keys=True, default=str)
+                    if _sig != st.session_state.get(_prev_key):
+                        st.session_state[_prev_key] = _sig
+                        try:
+                            raw = load_demo_image_bytes(row)
+                            st.session_state.setdefault("p2c_demo_staged", []).append(
+                                (row["filename"], raw)
+                            )
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Không tải được ảnh mẫu: {e}")
     st.markdown(
         '<p class="p2c-try-disclaimer">'
         "Ảnh mẫu cấu hình trong <code>frontend/sample_images.py</code> (file trong repo hoặc URL). "
