@@ -2,7 +2,7 @@
 
 APP_TITLE = "Chuẩn hóa ảnh chân dung học sinh"
 # Tăng / đổi chuỗi này khi deploy để dễ thấy trên Cloud (topbar + sidebar).
-APP_BUILD = "3.18.5-sample-nested-columns"
+APP_BUILD = "3.18.6-mobile-thumb-row-js"
 BLUE = "#005BC4"
 BG = "#F6F9FF"
 # Màu chữ nội dung / tiêu đề tùy chỉnh (CSS --text)

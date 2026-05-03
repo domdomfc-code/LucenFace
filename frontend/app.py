@@ -37,7 +37,7 @@ from frontend.streamlit_helpers import (
     render_checklist,
     result_to_checks_dict,
 )
-from frontend.styling import inject_app_css, render_sidebar_reopen_button
+from frontend.styling import inject_app_css, inject_mobile_sample_thumbs_row_fix, render_sidebar_reopen_button
 from frontend.thumbnails import render_image_thumbnails, thumbnail_checkbox_key
 from paste_image_component import paste_image_from_clipboard
 
@@ -172,6 +172,7 @@ def main() -> None:
     if "p2c_last_paste_fingerprint" not in st.session_state:
         st.session_state["p2c_last_paste_fingerprint"] = None
     inject_app_css()
+    inject_mobile_sample_thumbs_row_fix()
     render_sidebar_reopen_button()
 
     _git = git_short_sha()

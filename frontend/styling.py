@@ -373,6 +373,24 @@ def inject_app_css() -> None:
             }}
             section.main [data-testid="column"]:has(.p2c-sample-thumb-cluster-anchor) [data-testid="stHorizontalBlock"] {{
               max-width: min(calc(100vw - 1.5rem), 340px) !important;
+              display: flex !important;
+              flex-direction: row !important;
+              flex-wrap: nowrap !important;
+              justify-content: center !important;
+              align-items: flex-start !important;
+            }}
+            section.main [data-testid="column"]:has(.p2c-sample-thumb-cluster-anchor) [data-testid="stHorizontalBlock"] > div {{
+              display: flex !important;
+              flex-direction: row !important;
+              flex-wrap: nowrap !important;
+              justify-content: center !important;
+              width: 100% !important;
+            }}
+            section.main [data-testid="column"]:has(.p2c-sample-thumb-cluster-anchor) [data-testid="stHorizontalBlock"] [data-testid="column"]:has(.p2c-sample-thumb-marker) {{
+              flex: 0 0 auto !important;
+              width: auto !important;
+              max-width: 26% !important;
+              min-width: 0 !important;
             }}
           }}
           @media (max-width: 400px) {{
@@ -412,6 +430,77 @@ def inject_app_css() -> None:
         </style>
         """,
         unsafe_allow_html=True,
+    )
+
+
+def inject_mobile_sample_thumbs_row_fix() -> None:
+    """Streamlit có thể xếp cột con dọc trên mobile — ép flex row chỉ khi ≤768px (không đụng PC)."""
+    try:
+        import streamlit.components.v1 as components
+    except ImportError:
+        return
+    components.html(
+        """
+<div style="height:1px;width:1px;overflow:hidden;" aria-hidden="true"></div>
+<script>
+(function () {
+  var root = (window.parent && window.parent !== window) ? window.parent : window;
+  function fix() {
+    try {
+      if (!root.matchMedia || !root.matchMedia("(max-width: 768px)").matches) return;
+      var d = root.document;
+      var main = d.querySelector("section.main") || d.body;
+      var anchor = main.querySelector(".p2c-sample-thumb-cluster-anchor");
+      if (!anchor) return;
+      var col = anchor.closest("[data-testid=\\"column\\"]");
+      if (!col) return;
+      var hbs = col.querySelectorAll("[data-testid=\\"stHorizontalBlock\\"]");
+      hbs.forEach(function (hb) {
+        if (!hb.querySelector(".p2c-sample-thumb-marker")) return;
+        hb.style.setProperty("display", "flex", "important");
+        hb.style.setProperty("flex-direction", "row", "important");
+        hb.style.setProperty("flex-wrap", "nowrap", "important");
+        hb.style.setProperty("justify-content", "center", "important");
+        hb.style.setProperty("align-items", "flex-start", "important");
+        hb.style.setProperty("width", "100%", "important");
+        hb.style.setProperty("gap", "0.25rem", "important");
+        var inner = hb.firstElementChild;
+        if (inner) {
+          inner.style.setProperty("display", "flex", "important");
+          inner.style.setProperty("flex-direction", "row", "important");
+          inner.style.setProperty("flex-wrap", "nowrap", "important");
+          inner.style.setProperty("justify-content", "center", "important");
+          inner.style.setProperty("width", "100%", "important");
+          inner.style.setProperty("gap", "0.25rem", "important");
+        }
+        hb.querySelectorAll("[data-testid=\\"column\\"]").forEach(function (c) {
+          if (!c.querySelector(".p2c-sample-thumb-marker")) return;
+          c.style.setProperty("flex", "0 0 auto", "important");
+          c.style.setProperty("width", "auto", "important");
+          c.style.setProperty("max-width", "25%", "important");
+          c.style.setProperty("min-width", "0", "important");
+        });
+      });
+    } catch (e) {}
+  }
+  fix();
+  [80, 250, 700, 1600].forEach(function (t) { setTimeout(fix, t); });
+  try {
+    var mq = root.matchMedia("(max-width: 768px)");
+    mq.addEventListener("change", fix);
+  } catch (e1) {
+    try { root.matchMedia("(max-width: 768px)").addListener(fix); } catch (e2) {}
+  }
+  try {
+    var Mo = root.MutationObserver || MutationObserver;
+    var mo = new Mo(function () { fix(); });
+    mo.observe(root.document.body, { childList: true, subtree: true });
+    setTimeout(function () { try { mo.disconnect(); } catch (e) {} }, 10000);
+  } catch (e3) {}
+})();
+</script>
+""",
+        height=1,
     )
 
 
