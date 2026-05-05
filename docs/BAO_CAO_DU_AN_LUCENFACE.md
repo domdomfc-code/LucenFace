@@ -188,7 +188,7 @@ Validation phía server (Pydantic) đảm bảo `blue_hex` đúng dạng `#RRGGB
 
 ---
 
-## 10. Kết luận
+## 10. Tổng Kết
 
 LucenFace là giải pháp **chuyên biệt cho chuẩn hóa ảnh chân dung**, có kiến trúc rõ ràng (tách UI / API / xử lý ảnh), hỗ trợ nhiều kênh triển khai và mở rộng tích hợp qua FastAPI. Tài liệu này phục vụ mục đích nội bộ và trình bày dự án; chi tiết cài đặt và lệnh chạy tham chiếu **`README.md`** tại gốc repository.
 
